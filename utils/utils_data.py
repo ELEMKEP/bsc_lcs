@@ -1,13 +1,10 @@
 import os
-import sys
 
 import numpy as np
 import torch
-from torch.utils.data.dataset import TensorDataset
 from torch.utils.data import DataLoader
 
-sys.path.append(os.path.abspath('../data'))
-from dataset import *
+from data.dataset import EEGDataset
 
 
 def load_lmdb_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,

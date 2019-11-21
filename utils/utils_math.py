@@ -135,8 +135,6 @@ def get_tril_offdiag_indices(num_nodes):
 
 
 def mat_to_offdiag(inputs, num_atoms, num_edge_types):
-    # change attention to 3-dimensional [batch_size, num_edges, num_edge_types]
-    # inputs.shape = [batch_size, sum(n_heads), num_atoms, num_atoms]
     off_diag_idx = np.ravel_multi_index(
         np.where(np.ones((num_atoms, num_atoms)) - np.eye(num_atoms)),
         [num_atoms, num_atoms]).astype(np.int32)
@@ -156,8 +154,6 @@ def mat_to_offdiag(inputs, num_atoms, num_edge_types):
 
 
 def offdiag_to_mat(inputs, num_nodes):
-    # change attention to 3-dimensional [batch_size, num_edges, num_edge_types]
-    # inputs.shape = [batch_size, num_nodes, num_nodes, num_edge_types]
     off_diag_idx = np.ravel_multi_index(
         np.where(np.ones((num_nodes, num_nodes)) - np.eye(num_nodes)),
         [num_nodes, num_nodes]).astype(np.int32)
@@ -175,12 +171,8 @@ def offdiag_to_mat(inputs, num_nodes):
 
 
 def sample_graph(logits, args):
-    if args.bernoulli_sampling:
-        edges = bernoulli_sampling(logits)
-    elif args.deterministic_sampling:
+    if args.deterministic_sampling:
         edges = threshold_sampling(logits, threshold=args.threshold)
-    elif args.fully_connected_graph:
-        edges = threshold_sampling(logits, threshold=0.)
     else:
         edges = gumbel_softmax(logits, temp=args.temp, hard=args.hard)
 

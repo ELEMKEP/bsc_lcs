@@ -1,6 +1,4 @@
-import torch
 import torch.nn.functional as F
-import numpy as np
 
 
 def label_cross_entropy(preds, labels):

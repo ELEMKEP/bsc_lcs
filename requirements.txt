@@ -1,0 +1,9 @@
+numpy
+lmdb
+scikit-learn
+torch
+torchvision
+tqdm
+tensorflow
+tensorboard
+tensorboardX

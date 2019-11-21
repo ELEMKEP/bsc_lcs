@@ -1,5 +1,4 @@
 import os
-import sys
 import string
 import pickle
 import abc
@@ -8,7 +7,6 @@ import ast
 import lmdb
 import torch.utils.data as data
 import numpy as np
-from tqdm import tqdm
 
 
 class _BaseDatum(abc.ABC):

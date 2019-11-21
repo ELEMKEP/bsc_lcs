@@ -1,12 +1,9 @@
-import os
-import sys
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-sys.path.append(os.path.abspath('../utils'))
-from utils_math import get_offdiag_indices, gumbel_softmax
+# sys.path.append(os.path.abspath('../'))
+from utils.utils_math import get_offdiag_indices, gumbel_softmax
 
 _EPS = 1e-10
 
@@ -87,20 +84,15 @@ class DilatedInception(nn.Module):
 
 class MLPEncoder(nn.Module):
 
-    def __init__(self, n_in, n_hid, n_out, do_prob=0., factor=True):
+    def __init__(self, n_in, n_hid, n_out, do_prob=0.):
         super(MLPEncoder, self).__init__()
-
-        self.factor = factor
 
         self.mlp1 = MLP(n_in, n_hid, n_hid, do_prob)
         self.mlp2 = MLP(n_hid * 2, n_hid, n_hid, do_prob)
+
         self.mlp3 = MLP(n_hid, n_hid, n_hid, do_prob)
-        if self.factor:
-            self.mlp4 = MLP(n_hid * 3, n_hid, n_hid, do_prob)
-            print("Using factor graph MLP encoder.")
-        else:
-            self.mlp4 = MLP(n_hid * 2, n_hid, n_hid, do_prob)
-            print("Using MLP encoder.")
+        self.mlp4 = MLP(n_hid * 3, n_hid, n_hid, do_prob)
+
         self.fc_out = nn.Linear(n_hid, n_out)
         self.init_weights()
 
@@ -133,16 +125,11 @@ class MLPEncoder(nn.Module):
         x = self.mlp2(x)
         x_skip = x
 
-        if self.factor:
-            x = self.edge2node(x, rel_rec, rel_send)
-            x = self.mlp3(x)
-            x = self.node2edge(x, rel_rec, rel_send)
-            x = torch.cat((x, x_skip), dim=2)  # Skip connection
-            x = self.mlp4(x)
-        else:
-            x = self.mlp3(x)
-            x = torch.cat((x, x_skip), dim=2)  # Skip connection
-            x = self.mlp4(x)
+        x = self.edge2node(x, rel_rec, rel_send)
+        x = self.mlp3(x)
+        x = self.node2edge(x, rel_rec, rel_send)
+        x = torch.cat((x, x_skip), dim=2)  # Skip connection
+        x = self.mlp4(x)
 
         return self.fc_out(x)
 
@@ -151,7 +138,7 @@ class Feat_GNN(nn.Module):
     """MLP decoder module."""
 
     def __init__(self, n_in_node, n_time, n_obj, edge_types, msg_hid, msg_out,
-                 n_hid, n_out, do_prob=0., add_feat_dim=0, skip_first=False):
+                 n_hid, n_out, do_prob=0., skip_first=False):
         super(Feat_GNN, self).__init__()
         self.n_in_node = n_in_node
         self.n_time = n_time
@@ -188,13 +175,13 @@ class Feat_GNN(nn.Module):
         self.out_fc2 = nn.Linear(n_hid, n_out)
         self.dropout_prob = do_prob
 
-        self.init_weights()
+        self._init_weights()
 
-    def init_weights(self):
+    def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight.data)
-                m.bias.data.zero_(0.)
+                m.bias.data.zero_()
             elif isinstance(m, nn.Conv2d):
                 nn.init.xavier_normal_(m.weight.data)
                 m.bias.data.zero_()
@@ -206,14 +193,7 @@ class Feat_GNN(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def forward(self, inputs, rel_type, rel_rec, rel_send, add_feat=None):
-        # NOTE: Assumes that we have the same graph across all samples.
-        #       Therefore, in this implementation, rel_type doesn't expand.
-        if add_feat is not None:
-            if add_feat.size(2) != self.add_feat_dim:
-                print((add_feat.size(), self.add_feat_dim))
-                assert ()
-
+    def forward(self, inputs, rel_type, rel_rec, rel_send):
         # 1-D CNN for dimension reduction
         inputs = inputs.view(-1, self.n_time, self.n_in_node)
         inputs = inputs.transpose(1, 2).contiguous()
@@ -232,9 +212,6 @@ class Feat_GNN(nn.Module):
         all_msgs = torch.zeros(pre_msg.size(0), pre_msg.size(1),
                                pre_msg.size(2), self.msg_out,
                                dtype=torch.float32, device=pre_msg.device)
-
-        # if pre_msg.is_cuda:
-        #     all_msgs = all_msgs.cuda()
 
         if self.skip_first_edge_type:
             start_idx = 1
@@ -272,3 +249,7 @@ class Feat_GNN(nn.Module):
         pred = self.out_fc2(pred)
 
         return pred
+
+
+if __name__ == "__main__":
+    print('asdf')

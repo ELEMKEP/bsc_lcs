@@ -1,10 +1,7 @@
-import string
 import pickle
 import os
 import sys
 import getopt
-import ast
-import abc
 
 import lmdb
 import torch.utils.data as data

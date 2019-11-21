@@ -1,94 +1,50 @@
 import os
-import sys
 import time
 import pickle
 import datetime
 from contextlib import redirect_stdout
 
-from tqdm import tqdm
+import numpy as np
+import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim import lr_scheduler
+
+from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
 import arguments
-from model.modules import *
-from utils.utils_math import *
+from model.modules import MLPEncoder, Feat_GNN
+from utils.utils_math import encode_onehot, sample_graph
+from utils.utils_loss import label_accuracy, label_cross_entropy
+from utils.utils_miscellaneous import graph_to_image
 from utils.utils_data import *
-from utils.utils_loss import *
-from utils.utils_miscellaneous import *
-
 
 
 def _construct_model(args):
-    """
-    get encoder and decoder
-    """
-
-    if args.encoder == 'mlp':
-        if isinstance(args.encoder_hidden, list):
-            args.encoder_hidden = args.encoder_hidden[0]
-        encoder = MLPEncoder(args.timesteps * args.dims, args.encoder_hidden,
-                             args.edge_types, args.encoder_dropout, args.factor)
-    elif args.encoder == 'pemlp':
-        if isinstance(args.encoder_hidden, list):
-            args.encoder_hidden = args.encoder_hidden[0]
-        encoder = PositionalMLPEncoder(args.timesteps * args.dims,
-                                       args.encoder_hidden, args.edge_types,
-                                       args.encoder_dropout, args.factor,
-                                       PE_dim, PE_minmax, args.pe_bias,
-                                       args.pe_type)
-    elif args.encoder == 'att_v1':
-        encoder = AttentionEncoder_V1(
-            args.num_atoms, args.edge_types, args.timesteps * args.dims,
-            args.encoder_hidden, args.encoder_hidden_val, args.encoder_heads,
-            PE_dim, PE_minmax, args.pe_bias, args.encoder_att_usebn,
-            args.encoder_att_useln)
-
-    if args.decoder_deap == 'v1':
-        DEAPClassifier = DEAP_MLPClassifier
-    elif args.decoder_deap == 'v2':
-        DEAPClassifier = DEAP_MLPClassifier_V2
-    elif args.decoder_deap == 'v2_nosignal':
-        DEAPClassifier = DEAP_MLPClassifier_V2_NoSignal
-    elif args.decoder_deap == 'v3':
-        DEAPClassifier = DEAP_MLPClassifier_V3
-    elif args.decoder_deap == 'v4':
-        DEAPClassifier = DEAP_MLPClassifier_V4
-    elif args.decoder_deap == 'g':
-        DEAPClassifier = DEAP_GraphFC_V2
+    if isinstance(args.encoder_hidden, list):
+        args.encoder_hidden = args.encoder_hidden[0]
+    encoder = MLPEncoder(args.timesteps * args.dims, args.encoder_hidden,
+                         args.edge_types, args.encoder_dropout)
 
     if isinstance(args.decoder_hidden, list):
         args.decoder_hidden = args.decoder_hidden[0]
 
     if args.dataset == 'deap':
-        if args.label == 'valence':
-            decoder_out_dim = 2
-        elif args.label == 'video':
-            decoder_out_dim = 40
+        decoder_out_dim = 40
     elif args.dataset == 'dreamer':
-        if args.label in ['valence', 'arousal', 'dominance']:
-            decoder_out_dim = 2
-        elif args.label == 'video':
-            decoder_out_dim = 18
-    elif args.dataset == 'seed':
-        if args.label == 'valence':
-            decoder_out_dim = 3
-        elif args.label == 'video':
-            decoder_out_dim = 15
-    elif args.dataset == 'mmidb':
-        decoder_out_dim = 2
+        decoder_out_dim = 18
 
-    decoder = DEAPClassifier(
+    decoder = Feat_GNN(
         n_in_node=args.dims,
         n_time=args.timesteps,
-        n_obj=args.num_atoms,
+        n_obj=args.num_objects,
         edge_types=args.edge_types,
         msg_hid=args.decoder_hidden,
         msg_out=args.decoder_hidden,
         n_hid=args.decoder_hidden,
         n_out=decoder_out_dim,  # binary classification for valence
         do_prob=args.decoder_dropout,
-        add_feat_dim=args.encoder_out_feat,
         skip_first=args.skip_first)
 
     if args.load_folder:
@@ -107,7 +63,7 @@ def _construct_optimizer(models, args):
     for model in models:
         params = params + list(model.parameters())
 
-    optimizer = optim.Adam(params, lr=args.lr)
+    optimizer = optim.Adam(params, lr=args.lr, betas=(args.beta1, args.beta2))
     scheduler = lr_scheduler.StepLR(optimizer, step_size=args.lr_decay,
                                     gamma=args.gamma)
 
@@ -115,21 +71,15 @@ def _construct_optimizer(models, args):
 
 
 def _construct_auxiliary_parameters(args):
-    # Generate off-diagonal interaction graph
-    # Incidence matrix
-    off_diag = np.ones([args.num_atoms, args.num_atoms]) - np.eye(
-        args.num_atoms)
+    off_diag = np.ones([args.num_objects, args.num_objects]) - np.eye(
+        args.num_objects)
 
     rel_rec = np.array(encode_onehot(np.where(off_diag)[1]), dtype=np.float32)
     rel_send = np.array(encode_onehot(np.where(off_diag)[0]), dtype=np.float32)
     rel_rec = torch.FloatTensor(rel_rec)
     rel_send = torch.FloatTensor(rel_send)
 
-    log_prior = torch.FloatTensor(np.log(args.prior))
-    log_prior = torch.unsqueeze(log_prior, 0)
-    log_prior = torch.unsqueeze(log_prior, 0)
-
-    return rel_rec, rel_send, log_prior
+    return rel_rec, rel_send
 
 
 def _make_cuda(models, tensors, args):
@@ -142,7 +92,6 @@ def _make_cuda(models, tensors, args):
             cuda_tensors.append(tensor.cuda())
 
     return tuple(cuda_tensors)
-    # pylint: disable=unbalanced-tuple-unpacking
 
 
 def train(epoch, best_val_loss, args, params):
@@ -156,7 +105,6 @@ def train(epoch, best_val_loss, args, params):
     scheduler = params['scheduler']
     rel_rec = params['rel_rec']
     rel_send = params['rel_send']
-    log_prior = params['log_prior']
 
     encoder_file = params['encoder_file']
     decoder_file = params['decoder_file']
@@ -176,8 +124,6 @@ def train(epoch, best_val_loss, args, params):
     train_iterable = tqdm(train_loader)
     for index, (data, labels) in enumerate(train_iterable):
         train_iterable.set_description("Epoch{:3} Train".format(epoch + 1))
-        if args.debug:
-            t_debug = time.time()
 
         data = data[:, :, :args.timesteps, :]
         if args.cuda:
@@ -185,33 +131,8 @@ def train(epoch, best_val_loss, args, params):
             labels = labels.cuda()
         optimizer.zero_grad()
 
-        if getattr(args, 'random_graph', None):
-            n_edge = args.num_atoms * (args.num_atoms - 1)
-            edges = torch.rand(data.size(0), n_edge, args.edge_types)
-            if args.cuda:
-                edges = edges.cuda()
-            logits = edges
-            prob = edges
-        elif getattr(args, 'fully_connected_graph', None):
-            n_edge = args.num_atoms * (args.num_atoms - 1)
-            edges = torch.ones(data.size(0), n_edge, args.edge_types)
-            if args.cuda:
-                edges = edges.cuda()
-            logits = edges
-            prob = edges
-        else:
-            if args.encoder == 'mlp':
-                logits = encoder(data, rel_rec, rel_send)
-            elif args.encoder == 'pemlp':
-                position = params['position']
-                logits = encoder(data, rel_rec, rel_send, position)
-            elif args.encoder == 'att_v1':
-                position = params['position']
-                logits = encoder(data, position)
-
-            edges = sample_graph(logits, args)
-            prob = F.softmax(logits, dim=-1)
-
+        logits = encoder(data, rel_rec, rel_send)
+        edges = sample_graph(logits, args)
         output = decoder(data, edges, rel_rec, rel_send)
 
         loss_ent = label_cross_entropy(output, labels)
@@ -221,13 +142,6 @@ def train(epoch, best_val_loss, args, params):
         loss.backward()
         optimizer.step()
 
-        if args.debug:
-            print('Iteration - Loss and BP time: {:.4f}s'.format(time.time() -
-                                                                 t_debug))
-            t_debug = time.time()
-            print('Alloc: {}, Cache: {}'.format(torch.cuda.memory_allocated(),
-                                                torch.cuda.memory_cached()))
-
         acc_train.append(label_acc.detach().item())
         ent_train.append(loss_ent.detach().item())
         loss_train.append(loss.detach().item())
@@ -236,10 +150,6 @@ def train(epoch, best_val_loss, args, params):
     ent_valid = []
     loss_valid = []
 
-    if args.debug:
-        print('Alloc: {}, Cache: {}'.format(torch.cuda.memory_allocated(),
-                                            torch.cuda.memory_cached()))
-
     encoder.eval()
     decoder.eval()
 
@@ -247,67 +157,33 @@ def train(epoch, best_val_loss, args, params):
     for index, (data, labels) in enumerate(valid_iterable):
         valid_iterable.set_description("Epoch{:3} Valid".format(epoch + 1))
 
-        # data processing
         data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
 
         with torch.no_grad():
+            logits = encoder(data, rel_rec, rel_send)
+            edges = sample_graph(logits, args)
+            prob = F.softmax(logits, dim=-1)
 
-            if getattr(args, 'random_graph', None):
-                n_edge = args.num_atoms * (args.num_atoms - 1)
-                edges = torch.rand(data.size(0), n_edge, args.edge_types)
-                if args.cuda:
-                    edges = edges.cuda()
-                logits = edges
-                prob = edges
-            elif getattr(args, 'fully_connected_graph', None):
-                n_edge = args.num_atoms * (args.num_atoms - 1)
-                edges = torch.ones(data.size(0), n_edge, args.edge_types)
-                if args.cuda:
-                    edges = edges.cuda()
-                logits = edges
-                prob = edges
-            else:
-                if args.encoder == 'mlp':
-                    logits = encoder(data, rel_rec, rel_send)
-                elif args.encoder == 'pemlp':
-                    position = params['position']
-                    logits = encoder(data, rel_rec, rel_send, position)
-                elif args.encoder == 'att_v1':
-                    position = params['position']
-                    logits = encoder(data, position)
+            if index == 0 and use_tensorboard:
+                edge_image = graph_to_image(edges, args.skip_first,
+                                            args.num_objects, 64)
+                prob_image = graph_to_image(prob, args.skip_first,
+                                            args.num_objects, 64)
 
-                edges = sample_graph(logits, args)
-                prob = F.softmax(logits, dim=-1)
-
-                if index == 0 and use_tensorboard:
-                    edge_image = graph_to_image(edges, args.skip_first,
-                                                args.num_atoms, 64)
-                    prob_image = graph_to_image(prob, args.skip_first,
-                                                args.num_atoms, 64)
-
-                    writer.add_image('val_edge', edge_image, epoch + 1)
-                    writer.add_image('val_prob', prob_image, epoch + 1)
-
-            # validation output uses teacher forcing
+                writer.add_image('val_edge', edge_image, epoch + 1)
+                writer.add_image('val_prob', prob_image, epoch + 1)
 
             output = decoder(data, edges, rel_rec, rel_send)
-
             loss_ent = label_cross_entropy(output, labels)
             label_acc = label_accuracy(output, labels)
             loss = loss_ent
 
-
         acc_valid.append(label_acc.detach().item())
         ent_valid.append(loss_ent.detach().item())
         loss_valid.append(loss.detach().item())
-
-        if args.debug:
-            print('Alloc: {}, Cache: {}'.format(torch.cuda.memory_allocated(),
-                                                torch.cuda.memory_cached()))
-            torch.cuda.empty_cache()
 
     acc_train_m = np.mean(acc_train)
     ent_train_m = np.mean(ent_train)
@@ -325,7 +201,6 @@ def train(epoch, best_val_loss, args, params):
         writer.add_scalar('valid/Accuracy', acc_valid_m, epoch + 1)
         writer.add_scalar('valid/CrossEntropy', ent_valid_m, epoch + 1)
         writer.add_scalar('valid/TotalLoss', loss_valid_m, epoch + 1)
-
 
     with redirect_stdout(open(args.out, 'a')):
         out_string = ''.join(
@@ -352,21 +227,13 @@ def test(args, params):
     decoder = params['decoder']
     rel_rec = params['rel_rec']
     rel_send = params['rel_send']
-    log_prior = params['log_prior']
 
     encoder_file = params['encoder_file']
     decoder_file = params['decoder_file']
-    sf = params['save_folder']
 
     acc_test = []
     ent_test = []
     loss_test = []
-
-    preds_list = []
-    labels_list = []
-    logits_list = []
-    edges_list = []
-    prob_list = []
 
     encoder.eval()
     decoder.eval()
@@ -374,44 +241,15 @@ def test(args, params):
     decoder.load_state_dict(torch.load(decoder_file))
 
     for index, (data, labels) in enumerate(tqdm(test_loader)):
-
         data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
 
         with torch.no_grad():
-            if getattr(args, 'random_graph', None):
-                n_edge = args.num_atoms * (args.num_atoms - 1)
-                edges = torch.rand(data.size(0), n_edge, args.edge_types)
-                if args.cuda:
-                    edges = edges.cuda()
-                logits = edges
-                prob = edges
-            elif getattr(args, 'fully_connected_graph', None):
-                n_edge = args.num_atoms * (args.num_atoms - 1)
-                edges = torch.ones(data.size(0), n_edge, args.edge_types)
-                if args.cuda:
-                    edges = edges.cuda()
-                logits = edges
-                prob = edges
-            else:
-                if args.encoder == 'mlp':
-                    logits = encoder(data, rel_rec, rel_send)
-                elif args.encoder == 'pemlp':
-                    position = params['position']
-                    logits = encoder(data, rel_rec, rel_send, position)
-                elif args.encoder == 'att_v1':
-                    position = params['position']
-                    logits = encoder(data, position)
-
-                edges = sample_graph(logits, args)
-                prob = F.softmax(logits, dim=-1)
-
+            logits = encoder(data, rel_rec, rel_send)
+            edges = sample_graph(logits, args)
             output = decoder(data, edges, rel_rec, rel_send)
-
-            _, preds = output.max(-1)
-            _, target = labels.max(-1)
 
             loss_ent = label_cross_entropy(output, labels)
             label_acc = label_accuracy(output, labels)
@@ -431,12 +269,6 @@ def test(args, params):
     metric_dict['xent_test'] = ent_test_m
     metric_dict['loss_test'] = loss_test_m
 
-    preds_t = torch.cat(preds_list, dim=0).int().detach().cpu().numpy()
-    labels_t = torch.cat(labels_list, dim=0).int().detach().cpu().numpy()
-    logits_list = torch.cat(logits_list, dim=0).detach().cpu().numpy()
-    edges_list = torch.cat(edges_list, dim=0).detach().cpu().numpy()
-    prob_list = torch.cat(prob_list, dim=0).detach().cpu().numpy()
-
     with redirect_stdout(open(args.out, 'a')):
         print('--------------------------------')
         print('------------Testing-------------')
@@ -444,12 +276,6 @@ def test(args, params):
         print('acc_test: {:.10f}\n'.format(acc_test_m),
               'ent_test: {:.10f}\n'.format(ent_test_m),
               'loss_test: {:.10f}\n'.format(loss_test_m))
-
-    scipy.io.savemat(os.path.join(sf, 'preds.mat'), {'preds': preds_t})
-    scipy.io.savemat(os.path.join(sf, 'labels.mat'), {'labels': labels_t})
-    scipy.io.savemat(os.path.join(sf, 'logits.mat'), {'logits': logits_list})
-    scipy.io.savemat(os.path.join(sf, 'edges.mat'), {'edges': edges_list})
-    scipy.io.savemat(os.path.join(sf, 'prob.mat'), {'prob': prob_list})
 
     return metric_dict
 
@@ -466,11 +292,13 @@ def main():
     if args.cuda:
         torch.cuda.manual_seed(args.seed)
 
+    param_dict = dict()
+
     # Save model and meta-data. Always saves in a new sub-folder.
     if args.save_folder:
         timestamp = datetime.datetime.now().isoformat().replace(':', '-')
-        save_folder = '{}/allexp/exp{}_{}/'.format(args.save_folder, timestamp,
-                                                   args.out)
+        save_folder = '{}/exp{}_{}/'.format(args.save_folder, timestamp,
+                                            args.out)
         os.mkdir(save_folder)
         meta_file = os.path.join(save_folder, 'metadata.pkl')
         encoder_file = os.path.join(save_folder, 'encoder.pt')
@@ -480,23 +308,19 @@ def main():
         log = open(log_file, 'w')
 
         pickle.dump({'args': args}, open(meta_file, "wb"))
+
+        param_dict.update({
+            'save_folder': save_folder,
+            'encoder_file': encoder_file,
+            'decoder_file': decoder_file
+        })
     else:
         print("WARNING: No save_folder provided!" +
               "Testing (within this script) will throw an error.")
 
-    if args.debug:
-        # variable settings for DEBUG mode
-        args.out = sys.stdout
-
-    if args.tensorboard:
-        import socket
-        log_dir = os.path.join(
-            'runs', timestamp + '_' + args.out + '_' + socket.gethostname())
-        writer = SummaryWriter(logdir=log_dir)
-
     def transform(datum):
         if args.dataset == 'deap':
-            data_t = transform_data_raw(datum)
+            data_t = transform_deap_data_raw(datum)
             label_t = transform_deap_label_video(datum)
         elif args.dataset == 'dreamer':
             data_t = transform_dreamer_data_raw(datum)
@@ -509,29 +333,27 @@ def main():
                                 shuffle=True)
 
     encoder, decoder = _construct_model(args)
-    rel_rec, rel_send, log_prior = _construct_auxiliary_parameters(args)
-    position = electrode_coordinates(args.pos_type)
-
-    rel_rec, rel_send, log_prior, position = _make_cuda(
-        (encoder, decoder), (rel_rec, rel_send, log_prior, position), args)
-
+    rel_rec, rel_send = _construct_auxiliary_parameters(args)
+    rel_rec, rel_send = _make_cuda((encoder, decoder), (rel_rec, rel_send),
+                                   args)
     optimizer, scheduler = _construct_optimizer((encoder, decoder), args)
 
-    param_dict = {
+    param_dict.update({
         'loaders': loaders,
         'encoder': encoder,
         'decoder': decoder,
         'optimizer': optimizer,
         'scheduler': scheduler,
         'rel_rec': rel_rec,
-        'rel_send': rel_send,
-        'log_prior': log_prior,
-        'save_folder': save_folder,
-        'encoder_file': encoder_file,
-        'decoder_file': decoder_file,
-        'writer': writer,
-        'position': position,
-    }
+        'rel_send': rel_send
+    })
+
+    if args.tensorboard:
+        import socket
+        log_dir = os.path.join(
+            'runs', timestamp + '_' + args.out + '_' + socket.gethostname())
+        writer = SummaryWriter(logdir=log_dir)
+        param_dict['writer'] = writer
 
     # Train model
     best_val_loss = np.inf
@@ -563,19 +385,10 @@ def main():
                 gsample = 'CON'
         elif args.deterministic_sampling:
             gsample = 'DET'
-        else:
-            gsample = args.kl_div_type
 
         hparam_dict = {
             'lr': args.lr,
             'sampling': gsample,
-            'gl_tv1': args.add_1hop_tv,
-            'gl_gl1': args.add_graph_l1,
-            'gl_gl2': args.add_graph_l2,
-            'gl_inv': args.add_inv_variance,
-            'pe_l2': args.add_pe_l2,
-            'glw': args.graph_loss_weight,
-            'enc_type': args.encoder,
             'enc_hid': args.encoder_hidden,
             'dec_type': args.decoder_deap,
             'dec_hid': args.decoder_hidden,

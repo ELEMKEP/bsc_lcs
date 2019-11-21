@@ -2,10 +2,8 @@ import time
 import torch
 import torchvision.utils as vutils
 
-from utils_math import offdiag_to_mat
-
-import sklearn, sklearn.datasets
-import sklearn.naive_bayes, sklearn.linear_model, sklearn.svm, sklearn.neighbors, sklearn.ensemble
+from utils.utils_math import offdiag_to_mat
+from sklearn import datasets, naive_bayes, linear_model, svm, neighbors, ensemble
 
 
 def graph_to_image(graph, skip_first, num_atoms, max_cut):
