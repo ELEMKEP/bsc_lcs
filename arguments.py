@@ -73,6 +73,8 @@ def _add_graph_arguments(parser):
     )
     parser.add_argument('--temp', type=float, default=0.5,
                         help='Temperature for Gumbel softmax.')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                        help='Threshold for deterministic sampling.')
 
 
 def _add_model_arguments(parser):
