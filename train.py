@@ -390,7 +390,6 @@ def main():
             'lr': args.lr,
             'sampling': gsample,
             'enc_hid': args.encoder_hidden,
-            'dec_type': args.decoder_deap,
             'dec_hid': args.decoder_hidden,
         }
         writer.add_text('parameters', str(hparam_dict), 0)
