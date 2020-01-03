@@ -1,7 +1,8 @@
 numpy
+scipy
 lmdb
 scikit-learn
-torch
+torch==1.0.0
 torchvision
 tqdm
 tensorflow

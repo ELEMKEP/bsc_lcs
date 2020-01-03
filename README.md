@@ -3,6 +3,7 @@ This repository contains the official PyTorch implementation of:
 
 **Brain Signal Classification via Learning Connectivity Structure**  
 Soobeom Jang, Seong-Eun Moon, Jong-Seok Lee
+
 https://arxiv.org/abs/1905.11678
 
 ### Abstract

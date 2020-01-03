@@ -2,216 +2,259 @@ import pickle
 import os
 import sys
 import getopt
+import itertools
 
 import lmdb
 import torch.utils.data as data
 import scipy.io as sio
 import numpy as np
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 from dataset import *
 
 
-def construct_deap_lmdb(data_path, lmdb_root, seed=42):
-    train_map_size = 32 * (264 * (1024**2))
-    valid_map_size = 32 * (33 * (1024**2))
-    test_map_size = 32 * (33 * (1024**2))
-    # Train 176MB, Valid 22MB, Test 22MB / subject
-    # ~220MB for one subject samples
-    # (228065280 + 1280 + @) for each subject
+def _load_raw_data_deap(data_path):
+    N_SUBJ = 32
+    S_RATE = 128
 
-    train_root = os.path.join(lmdb_root, 'train//')
-    valid_root = os.path.join(lmdb_root, 'valid//')
-    test_root = os.path.join(lmdb_root, 'test//')
+    signal_list = []
+    label_list = []
+    for i in tqdm(range(N_SUBJ), desc='Loading data - subject '):
+        file_name = 's{:02d}.dat'.format(i + 1)
+        with open(os.path.join(data_path, file_name), 'rb') as f:
+            subj_data = pickle.load(f)
+        subj_signal = subj_data['data'][:, :32, 3 * S_RATE:]
+        subj_label = subj_data['labels']
 
-    train_env = lmdb.open(train_root, map_size=train_map_size)
-    valid_env = lmdb.open(valid_root, map_size=valid_map_size)
-    test_env = lmdb.open(test_root, map_size=test_map_size)
+        signal_list.append(subj_signal)
+        label_list.append(subj_label)
+
+    signal_list = np.stack(signal_list, axis=0)
+    label_list = np.stack(label_list, axis=0)
+
+    return signal_list, label_list, [
+        'VALENCE', 'AROUSAL', 'DOMINANCE', 'LIKING'
+    ]
+
+
+def _load_raw_data_dreamer(data_path):
+    N_SUBJ = 23
+    N_TRIAL = 18
+    S_RATE = 128
+    V_LENGTH = 60
+
+    IDX_EEG = 2
+    IDX_VAL = 4
+    IDX_ARS = 5
+    IDX_DOM = 6
+
+    mat_data = sio.loadmat(os.path.join(data_path, 'DREAMER.mat'))
+    dreamer_data = mat_data['DREAMER'][0][0][0][0]
+
+    eeg_list = []
+    label_list = []
+    for i in tqdm(range(N_SUBJ), desc='Loading data - subject '):
+        subj_data = dreamer_data[i][0][0]
+        subj_eeg = subj_data[IDX_EEG]
+        subj_val = subj_data[IDX_VAL]
+        subj_ars = subj_data[IDX_ARS]
+        subj_dom = subj_data[IDX_DOM]
+
+        subj_eeg_list = []
+        subj_label_list = []
+        for j in tqdm(range(N_TRIAL), desc='Loading data - video '):
+            sv_eeg = subj_eeg[0][0][1][j][0][0:V_LENGTH * S_RATE]
+            # size: (length x #electrode)
+            labels = np.array([subj_val[j], subj_ars[j], subj_dom[j]])
+
+            subj_eeg_list.append(np.transpose(sv_eeg))
+            subj_label_list.append(np.squeeze(labels))
+        subj_eeg_list = np.stack(subj_eeg_list, axis=0)
+        # N_TRIAL, N_ELECTRODE, V_LENGTH * S_RATE
+        subj_label_list = np.stack(subj_label_list, axis=0)
+        # N_TRIAL, 3(val, ars, dom)
+
+        eeg_list.append(subj_eeg_list)
+        label_list.append(subj_label_list)
+    eeg_list = np.stack(eeg_list, axis=0)
+    label_list = np.stack(label_list, axis=0)
+
+    # eeg_list.shape = N_SUBJ, N_TRIAL, N_ELECTRODE, V_LENGTH * S_RATE
+    # label_list.shape = N_SUBJ, N_TRIAL, 3(val, ars, dom)
+
+    return eeg_list, label_list, ['VALENCE', 'AROUSAL', 'DOMINANCE']
+
+
+def divide_signal(signals, labels, s_rate, window, overlap, axis=0):
+    # s_rate: samples / sec
+    # window: window length in seconds
+    #    * actual length: window * s_rate
+    # overlap: overlap between windows in seconds
+    #    * actual length: overlap * s_rate
+
+    signal_len = signals.shape[-1]
+    stride = (window - overlap) * s_rate
+    cursor_curr = 0
+    cursor_end = cursor_curr + window * s_rate
+
+    signals_divided = []
+    labels_divided = []
+    while cursor_end <= signal_len:
+        signals_divided.append(signals[..., cursor_curr:cursor_end])
+        labels_divided.append(labels)
+        cursor_curr += stride
+        cursor_end += stride
+
+    signals_divided = np.stack(signals_divided, axis=axis)
+    labels_divided = np.stack(labels_divided, axis=axis)
+
+    return signals_divided, labels_divided
+
+
+def divide_dataset(signals, labels):
+    S_RATE = 128
+
+    signals, labels = divide_signal(signals, labels, S_RATE, 3, 2, axis=0)
+
+    signals = signals.transpose(1, 2, 0, 3, 4)
+    labels = labels.transpose(1, 2, 0, 3)
+    sh = signals.shape
+    # Subject, Trial, Window, Object, Length (for signals)
+    # Subject, Trial, Window, Feat (for labels)
+
+    n_sub = sh[0]
+    n_tri = sh[1]
+    n_win = sh[2]
+    n_sample = n_sub * n_tri * n_win
+    subjects = np.zeros([n_sub, n_tri, n_win], dtype=np.int32)
+    trials = np.zeros([n_sub, n_tri, n_win], dtype=np.int32)
+
+    for s in range(n_sub):
+        for t in range(n_tri):
+            subjects[s, t, :] = s
+            trials[s, t, :] = t
+
+    signals = signals.reshape(n_sample, sh[3], sh[4])
+    labels = labels.reshape(n_sample, labels.shape[-1])
+    subjects = subjects.reshape(-1)
+    trials = trials.reshape(-1)
+
+    perm_idx = np.random.permutation(np.arange(n_sample))
+    signals = signals[perm_idx]
+    labels = labels[perm_idx]
+    subjects = subjects[perm_idx]
+    trials = trials[perm_idx]
+
+    sample_10p = int(np.floor(n_sample * 0.1))
+    train_cursor = n_sample - (2 * sample_10p)
+    valid_cursor = n_sample - (1 * sample_10p)
+
+    train_signals = signals[:train_cursor]
+    train_labels = labels[:train_cursor]
+    train_sub = subjects[:train_cursor]
+    train_tri = trials[:train_cursor]
+
+    valid_signals = signals[train_cursor:valid_cursor]
+    valid_labels = labels[train_cursor:valid_cursor]
+    valid_sub = subjects[train_cursor:valid_cursor]
+    valid_tri = trials[train_cursor:valid_cursor]
+
+    test_signals = signals[valid_cursor:]
+    test_labels = labels[valid_cursor:]
+    test_sub = subjects[valid_cursor:]
+    test_tri = trials[valid_cursor:]
+
+    sig_t = (train_signals, valid_signals, test_signals)
+    lab_t = (train_labels, valid_labels, test_labels)
+    sub_t = (train_sub, valid_sub, test_sub)
+    tri_t = (train_tri, valid_tri, test_tri)
+
+    return sig_t, lab_t, sub_t, tri_t
+
+
+def construct_lmdb(lmdb_root, lmdb_size, signals, labels, sub, tri, tag=''):
+    lmdb_env = lmdb.open(lmdb_root, map_size=lmdb_size)
+
+    n_all = signals.shape[0]
 
     data_index = 0
-    train_index = 0
-    valid_index = 0
-    test_index = 0
+    with lmdb_env.begin(write=True) as txn:
+        for idx in tqdm(range(n_all), desc='Constructing LMDB: ' + tag):
+            signal_t = signals[idx]
+            label_t = labels[idx]
+            datum = EEGDatum(dshape=np.asarray(signal_t.shape, dtype=np.int32),
+                             ddata=signal_t.astype(np.float32),
+                             lshape=np.asarray(label_t.shape, dtype=np.int32),
+                             ldata=label_t.astype(np.float32), subject=sub[idx],
+                             trial=tri[idx])
 
-    for file_idx in tqdm(range(32)):  # TODO: change to range(32)
-        data_file = 'windowed_%02d.dat' % (file_idx + 1)
-        label_file = 'label_%02d.dat' % (file_idx + 1)
-        with open(data_path + data_file, 'rb') as f:
-            signals = pickle.load(f)['signal'][:, :, ::2, :]
+            str_id = '{:06}'.format(data_index)
+            txn.put(str_id.encode('ascii'), datum.encode())
+            data_index += 1
 
-        with open(data_path + label_file, 'rb') as f:
-            labels = pickle.load(f)['labels']
-            # [#trial, 4 (#labels)]
+    lmdb_env.close()
 
-        # shuffling signals in window domain
-        np.random.seed(seed)
-        window_idx = np.random.permutation(np.arange(signals.shape[2]))
-        signals_s = signals[:, :, window_idx, :]
-        signals_s = np.transpose(signals_s, [0, 2, 1, 3])
-
-        for i in range(signals.shape[0]):
-            signals_t = signals_s[i]
-            label_t = labels[i]
-
-            if data_index % 5 == 1:  # 47:6:5
-                signals_train = signals_t[:47]
-                signals_valid = signals_t[47:53]
-                signals_test = signals_t[53:]
-            elif data_index % 5 == 3:  # 47:5:6
-                signals_train = signals_t[:47]
-                signals_valid = signals_t[47:52]
-                signals_test = signals_t[52:]
-            else:  # data_index % 5 = 0, 2, 4 / 46:6:6
-                signals_train = signals_t[:46]
-                signals_valid = signals_t[46:52]
-                signals_test = signals_t[52:]
-
-            with train_env.begin(write=True) as txn:
-                for j in range(signals_train.shape[0]):
-                    signal = signals_train[j]
-                    datum = EEGDatum(
-                        dshape=np.asarray(signal.shape, dtype=np.int32),
-                        ddata=signal.astype(np.float32),
-                        lshape=np.asarray(label_t.shape, dtype=np.int32),
-                        ldata=label_t.astype(np.float32), subject=file_idx + 1,
-                        trial=i)
-
-                    str_id = '{:06}'.format(train_index)
-                    txn.put(str_id.encode('ascii'), datum.encode())
-                    train_index += 1
-                    data_index += 1
-
-            with valid_env.begin(write=True) as txn:
-                for j in range(signals_valid.shape[0]):
-                    signal = signals_valid[j]
-                    datum = EEGDatum(
-                        dshape=np.asarray(signal.shape, dtype=np.int32),
-                        ddata=signal.astype(np.float32),
-                        lshape=np.asarray(label_t.shape, dtype=np.int32),
-                        ldata=label_t.astype(np.float32), subject=file_idx + 1,
-                        trial=i)
-
-                    str_id = '{:06}'.format(valid_index)
-                    txn.put(str_id.encode('ascii'), datum.encode())
-                    valid_index += 1
-                    data_index += 1
-
-            with test_env.begin(write=True) as txn:
-                for j in range(signals_test.shape[0]):
-                    signal = signals_test[j]
-                    datum = EEGDatum(
-                        dshape=np.asarray(signal.shape, dtype=np.int32),
-                        ddata=signal.astype(np.float32),
-                        lshape=np.asarray(label_t.shape, dtype=np.int32),
-                        ldata=label_t.astype(np.float32), subject=file_idx + 1,
-                        trial=i)
-
-                    str_id = '{:06}'.format(test_index)
-                    txn.put(str_id.encode('ascii'), datum.encode())
-                    test_index += 1
-                    data_index += 1
-
-    train_env.close()
-    valid_env.close()
-    test_env.close()
+    return data_index
 
 
-def construct_dreamer_lmdb(data_path, lmdb_root, seed=42):
-    train_map_size = 23 * (56 * (1024**2))
-    valid_map_size = 23 * (7 * (1024**2))
-    test_map_size = 23 * (7 * (1024**2))
-    # ~22.14MB for one subject sample --> 34MB alloc
+def construct_lmdb_dataset(input_path, output_path, dataset_type):
+    MAP_SIZE_MULTIPLER = 1.5
 
-    train_root = os.path.join(lmdb_root, 'train//')
-    valid_root = os.path.join(lmdb_root, 'valid//')
-    test_root = os.path.join(lmdb_root, 'test//')
+    if dataset_type == 'deap':
+        signals_raw, labels_raw, label_name = _load_raw_data_deap(input_path)
+    elif dataset_type == 'dreamer':
+        signals_raw, labels_raw, label_name = _load_raw_data_dreamer(input_path)
 
-    train_env = lmdb.open(train_root, map_size=train_map_size)
-    valid_env = lmdb.open(valid_root, map_size=valid_map_size)
-    test_env = lmdb.open(test_root, map_size=test_map_size)
+    print('-----Signal Statistics-----')
+    signals_mean = np.mean(signals_raw)
+    signals_std = np.std(signals_raw)
+    print('Mean: {}, Stddev: {}'.format(signals_mean, signals_std))
+    signals_raw = (signals_raw - signals_mean) / signals_std
 
-    data_index = 0
-    train_index = 0
-    valid_index = 0
-    test_index = 0
+    signals_divided, labels_divided, sub_divided, tri_divided = divide_dataset(
+        signals_raw, labels_raw)
+    train_signal, valid_signal, test_signal = signals_divided
+    train_labels, valid_labels, test_labels = labels_divided
+    train_sub, valid_sub, test_sub = sub_divided
+    train_tri, valid_tri, test_tri = tri_divided
 
-    for file_idx in tqdm(range(23)):  # TODO: change to range(32)
-        data_file = 'subject_%d.mat' % (file_idx + 1)
-        mat_data = sio.loadmat(os.path.join(data_path, data_file))
-        signals = mat_data['data']  # [#trial, #channels, #window, #signals]
-        valence = mat_data['valence']  # [#trial, 1]
-        arousal = mat_data['arousal']
-        dominance = mat_data['dominance']
-        labels = np.concatenate((valence, arousal, dominance),
-                                axis=1)  # [#trial, 3]
+    print('-----Processed Data Shape-----')
+    print('Train data: {}, label: {}'.format(str(train_signal.shape),
+                                             str(train_labels.shape)))
+    print('Valid data: {}, label: {}'.format(str(valid_signal.shape),
+                                             str(valid_labels.shape)))
+    print('Test data: {}, label: {}'.format(str(test_signal.shape),
+                                            str(test_labels.shape)))
 
-        # shuffling signals in window domain
-        np.random.seed(seed)
-        window_idx = np.random.permutation(np.arange(signals.shape[2]))
-        signals_s = signals[:, :, window_idx, :]
-        signals_s = np.transpose(
-            signals_s, [0, 2, 1, 3])  # [#trial, #window, #channels, #signals]
+    d_size = train_signal.dtype.itemsize
+    l_size = train_labels.dtype.itemsize
 
-        # 60 samples --> 48:6:6
-        for i in range(signals.shape[0]):  # Trial-level
-            signals_t = signals_s[i]  # [#window, #channels, #signals]
-            label_t = labels[i]  # [3,]
+    train_map_size = train_signal.size * d_size + train_labels.size * l_size
+    valid_map_size = valid_signal.size * d_size + valid_labels.size * l_size
+    test_map_size = test_signal.size * d_size + test_labels.size * l_size
 
-            signals_train = signals_t[:48]
-            signals_valid = signals_t[48:54]
-            signals_test = signals_t[54:]
+    train_map_size *= MAP_SIZE_MULTIPLER
+    valid_map_size *= MAP_SIZE_MULTIPLER
+    test_map_size *= MAP_SIZE_MULTIPLER
 
-            with train_env.begin(write=True) as txn:
-                for j in range(signals_train.shape[0]):
-                    signal = signals_train[j]
-                    datum = EEGDatum(
-                        dshape=np.asarray(signal.shape, dtype=np.int32),
-                        ddata=signal.astype(np.float32),
-                        lshape=np.asarray(label_t.shape, dtype=np.int32),
-                        ldata=label_t.astype(np.float32), subject=file_idx + 1,
-                        trial=i)
+    train_root = os.path.join(output_path, 'train//')
+    valid_root = os.path.join(output_path, 'valid//')
+    test_root = os.path.join(output_path, 'test//')
 
-                    str_id = '{:06}'.format(train_index)
-                    txn.put(str_id.encode('ascii'), datum.encode())
-                    train_index += 1
-                    data_index += 1
+    train_records = construct_lmdb(train_root, train_map_size, train_signal,
+                                   train_labels, train_sub, train_tri, 'train')
+    valid_records = construct_lmdb(valid_root, valid_map_size, valid_signal,
+                                   valid_labels, valid_sub, valid_tri, 'valid')
+    test_records = construct_lmdb(test_root, test_map_size, test_signal,
+                                  test_labels, test_sub, test_tri, 'test')
 
-            with valid_env.begin(write=True) as txn:
-                for j in range(signals_valid.shape[0]):
-                    signal = signals_valid[j]
-                    datum = EEGDatum(
-                        dshape=np.asarray(signal.shape, dtype=np.int32),
-                        ddata=signal.astype(np.float32),
-                        lshape=np.asarray(label_t.shape, dtype=np.int32),
-                        ldata=label_t.astype(np.float32), subject=file_idx + 1,
-                        trial=i)
-
-                    str_id = '{:06}'.format(valid_index)
-                    txn.put(str_id.encode('ascii'), datum.encode())
-                    valid_index += 1
-                    data_index += 1
-
-            with test_env.begin(write=True) as txn:
-                for j in range(signals_test.shape[0]):
-                    signal = signals_test[j]
-                    datum = EEGDatum(
-                        dshape=np.asarray(signal.shape, dtype=np.int32),
-                        ddata=signal.astype(np.float32),
-                        lshape=np.asarray(label_t.shape, dtype=np.int32),
-                        ldata=label_t.astype(np.float32), subject=file_idx + 1,
-                        trial=i)
-
-                    str_id = '{:06}'.format(test_index)
-                    txn.put(str_id.encode('ascii'), datum.encode())
-                    test_index += 1
-                    data_index += 1
-
-    train_env.close()
-    valid_env.close()
-    test_env.close()
+    print('-----LMDB Records-----')
+    print('#Train: {}, #Valid: {}, #Test: {}'.format(train_records,
+                                                     valid_records,
+                                                     test_records))
 
 
-def test_lmdb_dataset_v2(lmdb_root, batch_size=128):
+def test_lmdb_dataset(lmdb_root, batch_size=128):
     train_root = os.path.join(lmdb_root, 'train//')
     valid_root = os.path.join(lmdb_root, 'valid//')
     test_root = os.path.join(lmdb_root, 'test//')
@@ -226,7 +269,6 @@ def test_lmdb_dataset_v2(lmdb_root, batch_size=128):
     train_mean = []
     for signal, label in tqdm(train_loader):
         train_mean.append(signal.mean())
-
     valid_mean = []
     for signal, label in tqdm(valid_loader):
         valid_mean.append(signal.mean())
@@ -243,17 +285,22 @@ def test_lmdb_dataset_v2(lmdb_root, batch_size=128):
 def main(argv):
     input_path = None
     output_path = None
-    dataset_type = 'deap_v2'
+    dataset_type = 'deap'
 
     try:
         opts, args = getopt.getopt(
-            argv, "hd:i:o:", ["dataset_type=", "input_path=", "output_path="])
+            argv, "hd:i:o:s:",
+            ["dataset_type=", "input_path=", "output_path=", "scheme="])
     except getopt.GetoptError:
-        print('dataset_lmdb.py -i <inputpath> -o <outputpath>')
+        print(
+            'lmdb_generate.py -i <inputpath> -o <outputpath> -d <dataset_type> -s <scheme>'
+        )
         sys.exit(2)
     for opt, arg in opts:
         if opt == '-h':
-            print('dataset_lmdb.py -i <inputpath> -o <outputpath>')
+            print(
+                'lmdb_generate.py -i <inputpath> -o <outputpath> -d <dataset_type> -s <scheme>'
+            )
             sys.exit()
         elif opt in ("-i", "--input_path"):
             input_path = arg
@@ -265,16 +312,8 @@ def main(argv):
     assert input_path is not None, 'Input path should be specified.'
     assert output_path is not None, 'Output path should be specified.'
 
-    if dataset_type == "deap":
-        print('Dataset_type: DEAP')
-        construct_deap_lmdb(data_path=input_path, lmdb_root=output_path)
-        print('Test dataset...')
-        test_lmdb_dataset_v2(lmdb_root=output_path)
-    elif dataset_type == 'dreamer':
-        print('Dataset type: DREAMER')
-        construct_dreamer_lmdb(data_path=input_path, lmdb_root=output_path)
-        print('Test dataset...')
-        test_lmdb_dataset_v2(lmdb_root=output_path)
+    construct_lmdb_dataset(input_path, output_path, dataset_type)
+    test_lmdb_dataset(output_path)
 
 
 if __name__ == "__main__":
