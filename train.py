@@ -378,13 +378,12 @@ def main():
         log.close()
 
     if writer is not None:
-        if args.cross_entropy_loss_only:
-            if args.hard:
-                gsample = 'STO'
-            else:
-                gsample = 'CON'
-        elif args.deterministic_sampling:
+        if args.deterministic_sampling:
             gsample = 'DET'
+        elif args.hard:
+            gsample = 'STO'
+        else:
+            gsample = 'CON'
 
         hparam_dict = {
             'lr': args.lr,
