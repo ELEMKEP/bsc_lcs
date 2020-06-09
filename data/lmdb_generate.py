@@ -38,46 +38,16 @@ def _load_raw_data_deap(data_path):
 
 
 def _load_raw_data_dreamer(data_path):
-    N_SUBJ = 23
-    N_TRIAL = 18
-    S_RATE = 128
-    V_LENGTH = 60
+    mat_data = sio.loadmat(os.path.join(data_path, 'Processed.mat'))
 
-    IDX_EEG = 2
-    IDX_VAL = 4
-    IDX_ARS = 5
-    IDX_DOM = 6
+    valence = mat_data['valence']
+    arousal = mat_data['arousal']
+    dominance = mat_data['dominance']
+    stimuli = mat_data['stimuli']
+    baseline = mat_data['baseline']
 
-    mat_data = sio.loadmat(os.path.join(data_path, 'DREAMER.mat'))
-    dreamer_data = mat_data['DREAMER'][0][0][0][0]
-
-    eeg_list = []
-    label_list = []
-    for i in tqdm(range(N_SUBJ), desc='Loading data - subject '):
-        subj_data = dreamer_data[i][0][0]
-        subj_eeg = subj_data[IDX_EEG]
-        subj_val = subj_data[IDX_VAL]
-        subj_ars = subj_data[IDX_ARS]
-        subj_dom = subj_data[IDX_DOM]
-
-        subj_eeg_list = []
-        subj_label_list = []
-        for j in tqdm(range(N_TRIAL), desc='Loading data - video '):
-            sv_eeg = subj_eeg[0][0][1][j][0][0:V_LENGTH * S_RATE]
-            # size: (length x #electrode)
-            labels = np.array([subj_val[j], subj_ars[j], subj_dom[j]])
-
-            subj_eeg_list.append(np.transpose(sv_eeg))
-            subj_label_list.append(np.squeeze(labels))
-        subj_eeg_list = np.stack(subj_eeg_list, axis=0)
-        # N_TRIAL, N_ELECTRODE, V_LENGTH * S_RATE
-        subj_label_list = np.stack(subj_label_list, axis=0)
-        # N_TRIAL, 3(val, ars, dom)
-
-        eeg_list.append(subj_eeg_list)
-        label_list.append(subj_label_list)
-    eeg_list = np.stack(eeg_list, axis=0)
-    label_list = np.stack(label_list, axis=0)
+    eeg_list = stimuli.astype(np.float32)
+    label_list = np.stack((valence, arousal, dominance), axis=-1)
 
     # eeg_list.shape = N_SUBJ, N_TRIAL, N_ELECTRODE, V_LENGTH * S_RATE
     # label_list.shape = N_SUBJ, N_TRIAL, 3(val, ars, dom)
@@ -111,82 +81,111 @@ def divide_signal(signals, labels, s_rate, window, overlap, axis=0):
     return signals_divided, labels_divided
 
 
-def divide_dataset(signals, labels):
+def divide_dataset(signals, labels, dataset_type, scheme):
     S_RATE = 128
 
-    signals, labels = divide_signal(signals, labels, S_RATE, 3, 2, axis=0)
+    if 'time' in scheme:
+        if scheme == 'time':
+            # 00~20: training, 20~25: validation, 25~30: test
+            # 30~50: training, 50~55: validation, 55~60: test
+            # 3 seconds window, 2 seconds overlap
+            # 34 training segments, 6 test segments
+            t1, t2, t3, t4, t5, t6 = 20, 25, 30, 50, 55, 60
+            window = 3
+            overlap = 2
+        elif scheme == 'time_nooverlap_w3':
+            # 00~24: training, 24~27: validation, 27~30: test
+            # 30~54: training, 54~57: validation, 57~60: test
+            # 3 seconds window, 0 seconds overlap
+            # 16 training segments, 2 valid segments, 2 test
+            t1, t2, t3, t4, t5, t6 = 24, 27, 30, 54, 57, 60
+            window = 3
+            overlap = 0
+        elif scheme == 'time_nooverlap_w2':
+            # 00~22: training, 22~26: validation, 26~30: test
+            # 30~52: training, 52~56: validation, 56~60: test
+            # 2 seconds window, 0 seconds overlap
+            # 22 training segments, 4 valid segments, 4 test
+            t1, t2, t3, t4, t5, t6 = 22, 26, 30, 52, 56, 60
+            window = 2
+            overlap = 0
 
-    signals = signals.transpose(1, 2, 0, 3, 4)
-    labels = labels.transpose(1, 2, 0, 3)
-    sh = signals.shape
-    # Subject, Trial, Window, Object, Length (for signals)
-    # Subject, Trial, Window, Feat (for labels)
+        train_s1, train_l1 = divide_signal(signals[..., 0 * S_RATE:t1 * S_RATE],
+                                           labels, S_RATE, window, overlap,
+                                           axis=2)
+        valid_s1, valid_l1 = divide_signal(
+            signals[..., t1 * S_RATE:t2 * S_RATE], labels, S_RATE, window,
+            overlap, axis=2)
+        test_s1, test_l1 = divide_signal(signals[..., t2 * S_RATE:t3 * S_RATE],
+                                         labels, S_RATE, window, overlap,
+                                         axis=2)
 
-    n_sub = sh[0]
-    n_tri = sh[1]
-    n_win = sh[2]
-    n_sample = n_sub * n_tri * n_win
-    subjects = np.zeros([n_sub, n_tri, n_win], dtype=np.int32)
-    trials = np.zeros([n_sub, n_tri, n_win], dtype=np.int32)
+        train_s2, train_l2 = divide_signal(
+            signals[..., t3 * S_RATE:t4 * S_RATE], labels, S_RATE, window,
+            overlap, axis=2)
+        valid_s2, valid_l2 = divide_signal(
+            signals[..., t4 * S_RATE:t5 * S_RATE], labels, S_RATE, window,
+            overlap, axis=2)
+        test_s2, test_l2 = divide_signal(signals[..., t5 * S_RATE:t6 * S_RATE],
+                                         labels, S_RATE, window, overlap,
+                                         axis=2)
 
-    for s in range(n_sub):
-        for t in range(n_tri):
-            subjects[s, t, :] = s
-            trials[s, t, :] = t
+        # n_win, n_subj, n_trial, n_electrode, win_length
+        # n_win, n_subj, n_trial, feats
 
-    signals = signals.reshape(n_sample, sh[3], sh[4])
-    labels = labels.reshape(n_sample, labels.shape[-1])
-    subjects = subjects.reshape(-1)
-    trials = trials.reshape(-1)
+        train_signals = np.concatenate((train_s1, train_s2), axis=2)
+        valid_signals = np.concatenate((valid_s1, valid_s2), axis=2)
+        test_signals = np.concatenate((test_s1, test_s2), axis=2)
 
-    perm_idx = np.random.permutation(np.arange(n_sample))
-    signals = signals[perm_idx]
-    labels = labels[perm_idx]
-    subjects = subjects[perm_idx]
-    trials = trials[perm_idx]
+        train_labels = np.concatenate((train_l1, train_l2), axis=2)
+        valid_labels = np.concatenate((valid_l1, valid_l2), axis=2)
+        test_labels = np.concatenate((test_l1, test_l2), axis=2)
+    elif scheme == 'subject':
+        if dataset_type == 'deap':
+            train_signals = signals[0:24]
+            train_labels = labels[0:24]
+            valid_signals = signals[24:28]
+            valid_labels = labels[24:28]
+            test_signals = signals[28:32]
+            test_labels = labels[28:32]
+        elif dataset_type == 'dreamer':
+            train_signals = signals[0:17]
+            train_labels = labels[0:17]
+            valid_signals = signals[17:20]
+            valid_labels = labels[17:20]
+            test_signals = signals[20:23]
+            test_labels = labels[20:23]
 
-    sample_10p = int(np.floor(n_sample * 0.1))
-    train_cursor = n_sample - (2 * sample_10p)
-    valid_cursor = n_sample - (1 * sample_10p)
+        # DEAP subject scheme
+        # DEAP: 24, 4, 4 (0:24, 24:28, 28:32)
+        # DREAMER: 17, 3, 3 (0:17, 17:20, 20:23)
+        train_signals, train_labels = divide_signal(train_signals, train_labels,
+                                                    S_RATE, 3, 2, axis=2)
+        valid_signals, valid_labels = divide_signal(valid_signals, valid_labels,
+                                                    S_RATE, 3, 2, axis=2)
+        test_signals, test_labels = divide_signal(test_signals, test_labels,
+                                                  S_RATE, 3, 2, axis=2)
 
-    train_signals = signals[:train_cursor]
-    train_labels = labels[:train_cursor]
-    train_sub = subjects[:train_cursor]
-    train_tri = trials[:train_cursor]
-
-    valid_signals = signals[train_cursor:valid_cursor]
-    valid_labels = labels[train_cursor:valid_cursor]
-    valid_sub = subjects[train_cursor:valid_cursor]
-    valid_tri = trials[train_cursor:valid_cursor]
-
-    test_signals = signals[valid_cursor:]
-    test_labels = labels[valid_cursor:]
-    test_sub = subjects[valid_cursor:]
-    test_tri = trials[valid_cursor:]
-
-    sig_t = (train_signals, valid_signals, test_signals)
-    lab_t = (train_labels, valid_labels, test_labels)
-    sub_t = (train_sub, valid_sub, test_sub)
-    tri_t = (train_tri, valid_tri, test_tri)
-
-    return sig_t, lab_t, sub_t, tri_t
+    return (train_signals, valid_signals,
+            test_signals), (train_labels, valid_labels, test_labels)
 
 
-def construct_lmdb(lmdb_root, lmdb_size, signals, labels, sub, tri, tag=''):
+def construct_lmdb(lmdb_root, lmdb_size, signals, labels, tag=''):
     lmdb_env = lmdb.open(lmdb_root, map_size=lmdb_size)
 
-    n_all = signals.shape[0]
+    n_sub, n_tri, n_win, _, _ = signals.shape
+    list_all = itertools.product(range(n_sub), range(n_tri), range(n_win))
 
     data_index = 0
     with lmdb_env.begin(write=True) as txn:
-        for idx in tqdm(range(n_all), desc='Constructing LMDB: ' + tag):
-            signal_t = signals[idx]
-            label_t = labels[idx]
+        for sub, tri, win in tqdm(list_all, desc='Constructing LMDB: ' + tag):
+            signal_t = signals[sub, tri, win]
+            label_t = labels[sub, tri, win]
             datum = EEGDatum(dshape=np.asarray(signal_t.shape, dtype=np.int32),
                              ddata=signal_t.astype(np.float32),
                              lshape=np.asarray(label_t.shape, dtype=np.int32),
-                             ldata=label_t.astype(np.float32), subject=sub[idx],
-                             trial=tri[idx])
+                             ldata=label_t.astype(np.float32), subject=sub,
+                             trial=tri)
 
             str_id = '{:06}'.format(data_index)
             txn.put(str_id.encode('ascii'), datum.encode())
@@ -197,26 +196,26 @@ def construct_lmdb(lmdb_root, lmdb_size, signals, labels, sub, tri, tag=''):
     return data_index
 
 
-def construct_lmdb_dataset(input_path, output_path, dataset_type):
-    MAP_SIZE_MULTIPLER = 1.5
+def construct_lmdb_dataset(input_path, output_path, dataset_type,
+                           scheme='time'):
 
     if dataset_type == 'deap':
         signals_raw, labels_raw, label_name = _load_raw_data_deap(input_path)
+        MAP_SIZE_MULTIPLER = 3
     elif dataset_type == 'dreamer':
         signals_raw, labels_raw, label_name = _load_raw_data_dreamer(input_path)
+        MAP_SIZE_MULTIPLER = 3
 
     print('-----Signal Statistics-----')
     signals_mean = np.mean(signals_raw)
     signals_std = np.std(signals_raw)
     print('Mean: {}, Stddev: {}'.format(signals_mean, signals_std))
-    signals_raw = (signals_raw - signals_mean) / signals_std
+    # signals_raw = (signals_raw - signals_mean) / signals_std
 
-    signals_divided, labels_divided, sub_divided, tri_divided = divide_dataset(
-        signals_raw, labels_raw)
+    signals_divided, labels_divided = divide_dataset(signals_raw, labels_raw,
+                                                     dataset_type, scheme)
     train_signal, valid_signal, test_signal = signals_divided
     train_labels, valid_labels, test_labels = labels_divided
-    train_sub, valid_sub, test_sub = sub_divided
-    train_tri, valid_tri, test_tri = tri_divided
 
     print('-----Processed Data Shape-----')
     print('Train data: {}, label: {}'.format(str(train_signal.shape),
@@ -242,11 +241,11 @@ def construct_lmdb_dataset(input_path, output_path, dataset_type):
     test_root = os.path.join(output_path, 'test//')
 
     train_records = construct_lmdb(train_root, train_map_size, train_signal,
-                                   train_labels, train_sub, train_tri, 'train')
+                                   train_labels, 'train')
     valid_records = construct_lmdb(valid_root, valid_map_size, valid_signal,
-                                   valid_labels, valid_sub, valid_tri, 'valid')
+                                   valid_labels, 'valid')
     test_records = construct_lmdb(test_root, test_map_size, test_signal,
-                                  test_labels, test_sub, test_tri, 'test')
+                                  test_labels, 'test')
 
     print('-----LMDB Records-----')
     print('#Train: {}, #Valid: {}, #Test: {}'.format(train_records,
@@ -254,7 +253,7 @@ def construct_lmdb_dataset(input_path, output_path, dataset_type):
                                                      test_records))
 
 
-def test_lmdb_dataset(lmdb_root, batch_size=128):
+def test_lmdb_dataset(lmdb_root, batch_size=256):
     train_root = os.path.join(lmdb_root, 'train//')
     valid_root = os.path.join(lmdb_root, 'valid//')
     test_root = os.path.join(lmdb_root, 'test//')
@@ -308,11 +307,13 @@ def main(argv):
             output_path = arg
         elif opt in ("-d", "--dataset_type"):
             dataset_type = arg
+        elif opt in ("-s", "--scheme"):
+            scheme = arg
 
     assert input_path is not None, 'Input path should be specified.'
     assert output_path is not None, 'Output path should be specified.'
 
-    construct_lmdb_dataset(input_path, output_path, dataset_type)
+    construct_lmdb_dataset(input_path, output_path, dataset_type, scheme)
     test_lmdb_dataset(output_path)
 
 
