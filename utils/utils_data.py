@@ -8,7 +8,7 @@ from data.dataset import EEGDataset
 
 
 def load_lmdb_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,
-                      transform=None, shuffle=True):
+                      transform=None, shuffle=True, print_dataset=False):
     train_root = os.path.join(lmdb_root, 'train//')
     valid_root = os.path.join(lmdb_root, 'valid//')
     test_root = os.path.join(lmdb_root, 'test//')
@@ -23,9 +23,10 @@ def load_lmdb_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,
                               shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    print(train_dataset)
-    print(valid_dataset)
-    print(test_dataset)
+    if print_dataset:
+        print(train_dataset)
+        print(valid_dataset)
+        print(test_dataset)
 
     return train_loader, valid_loader, test_loader
     # Library function for LMDBloading
