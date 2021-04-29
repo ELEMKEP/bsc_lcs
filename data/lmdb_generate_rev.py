@@ -184,7 +184,12 @@ def construct_lmdb_dataset(input_path, output_path, dataset_type):
         test_records = construct_lmdb(test_root, test_map_size, test_signal,
                                       test_label, 'test')
 
+        test_lmdb_dataset(train_root, batch_size=256)
+        test_lmdb_dataset(test_root, batch_size=256)
+
         print('-----LMDB Records-----')
+        print('Train path: ', train_root)
+        print('Test path: ', test_root)
         print('{} - #Train: {}, #Test: {}'.format(i, train_records,
                                                   test_records))
 
