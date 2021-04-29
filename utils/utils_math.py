@@ -62,11 +62,24 @@ def gumbel_softmax(logits, temp=1, hard=False, eps=1e-10, dim=-1):
     return y
 
 
-def threshold_sampling(logits, threshold=0.5):
+def threshold_sampling(logits, threshold=0.5, hard=False):
     """
     Omit Gumbel sampling for deterministic sampling.
     """
     y_soft = torch.sigmoid(logits)
+
+    y_hard = y_soft.ge(threshold).to(y_soft.device, dtype=torch.float32)
+    y = (y_hard - y_soft).detach() + y_soft
+
+    return y
+
+def threshold_sampling_v2(logits, threshold=0.5, hard=False):
+    """
+    Omit Gumbel sampling for deterministic sampling.
+    V2 different: no sigmoid in sampling function (sigmoid is applied at logit function)
+    """
+    # y_soft = torch.sigmoid(logits)
+    y_soft = logits
 
     y_hard = y_soft.ge(threshold).to(y_soft.device, dtype=torch.float32)
     y = (y_hard - y_soft).detach() + y_soft
@@ -177,3 +190,12 @@ def sample_graph(logits, args):
         edges = gumbel_softmax(logits, temp=args.temp, hard=args.hard)
 
     return edges
+
+def sample_graph_v2(logits, args):
+    if args.deterministic_sampling:
+        edges = threshold_sampling_v2(logits, threshold=args.threshold)
+    else:
+        edges = gumbel_softmax(logits, temp=args.temp, hard=args.hard)
+
+    return edges
+

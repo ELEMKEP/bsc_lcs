@@ -44,6 +44,7 @@ def _add_learning_arguments(parser):
     parser.add_argument(
         '--lr-decay', type=int, default=200,
         help='After how epochs to decay LR by a factor of gamma.')
+    parser.add_argument('--weight-decay', type=float, default=0.0001, help='L2 penalty of model')
     parser.add_argument('--gamma', type=float, default=0.5,
                         help='LR decay factor.')
 
@@ -75,6 +76,10 @@ def _add_graph_arguments(parser):
                         help='Temperature for Gumbel softmax.')
     parser.add_argument('--threshold', type=float, default=0.5,
                         help='Threshold for deterministic sampling.')
+    parser.add_argument('--graph-loss', type=str, default='',
+                        help='Add regularization loss for graph')
+    parser.add_argument('--graph-loss-weight', type=float, default=1,
+                        help='Weight for graph regularization loss')
 
 
 def _add_model_arguments(parser):
@@ -87,6 +92,13 @@ def _add_model_arguments(parser):
                         help='Dropout rate (1 - keep probability).')
     parser.add_argument('--decoder-dropout', type=float, default=0.0,
                         help='Dropout rate (1 - keep probability).')
+    parser.add_argument('--disable-graph', action='store_true', default=False,
+                        help='Disable graph extraction part')
+    parser.add_argument('--disable-signal', action='store_true', default=False,
+                        help='Disable feature extraction part (using graph only)')
+    parser.add_argument('--bn-decoder', action='store_true', default=False,
+                        help='Use Feat_GNN_BN (Batch-normalization layer in decoder cnn)')
+                        
 
 
 def _add_miscellaneous_arguments(parser):
@@ -117,9 +129,9 @@ def parse():
     else:
         args.seed = args.seed
 
-    with open(args.out, 'a') as f:
-        with redirect_stdout(f):
-            print(args)
+    # with open(args.out, 'a') as f:
+    #     with redirect_stdout(f):
+    #         print(args)
     print(args)
 
     return args

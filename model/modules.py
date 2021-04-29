@@ -84,7 +84,7 @@ class DilatedInception(nn.Module):
 
 class MLPEncoder(nn.Module):
 
-    def __init__(self, n_in, n_hid, n_out, do_prob=0.):
+    def __init__(self, n_in, n_hid, n_out, do_prob=0., activation=False):
         super(MLPEncoder, self).__init__()
 
         self.mlp1 = MLP(n_in, n_hid, n_hid, do_prob)
@@ -95,6 +95,11 @@ class MLPEncoder(nn.Module):
 
         self.fc_out = nn.Linear(n_hid, n_out)
         self.init_weights()
+
+        if activation:
+            self.activation = torch.sigmoid()
+        else:
+            self.activation = None
 
     def init_weights(self):
         for m in self.modules():
@@ -131,7 +136,11 @@ class MLPEncoder(nn.Module):
         x = torch.cat((x, x_skip), dim=2)  # Skip connection
         x = self.mlp4(x)
 
-        return self.fc_out(x)
+        # return self.fc_out(x)
+        if self.activation:
+            return self.activation(self.fc_out(x))
+        else:
+            return self.fc_out(x)
 
 
 class Feat_GNN(nn.Module):
