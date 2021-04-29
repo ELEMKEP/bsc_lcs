@@ -4,6 +4,7 @@ import sys
 import getopt
 import itertools
 from pathlib import Path
+from sys import platform
 
 import lmdb
 import torch.utils.data as data
@@ -12,6 +13,7 @@ import numpy as np
 from tqdm import tqdm, trange
 
 from dataset import *
+
 '''
 Objective
 1. Make K-fold dataset
@@ -19,19 +21,25 @@ Objective
 3. Using K-fold to get bsc_lcs results
 '''
 
-
 def _load_raw_data_deap(data_path):
     N_SUBJ = 32
     S_RATE = 128
+
+    if platform == 'linux':
+        data_key = b'data'
+        label_key = b'labels'
+    else:
+        data_key = 'data'
+        label_key = 'labels'
 
     signal_list = []
     label_list = []
     for i in tqdm(range(N_SUBJ), desc='Loading data - subject '):
         file_name = 's{:02d}.dat'.format(i + 1)
         with open(os.path.join(data_path, file_name), 'rb') as f:
-            subj_data = pickle.load(f)
-        subj_signal = subj_data['data'][:, :32, 3 * S_RATE:]
-        subj_label = subj_data['labels']
+            subj_data = pickle.load(f, encoding='bytes')
+        subj_signal = subj_data[data_key][:, :32, 3 * S_RATE:]
+        subj_label = subj_data[label_key]
 
         signal_list.append(subj_signal)
         label_list.append(subj_label)
@@ -115,11 +123,10 @@ def construct_lmdb(lmdb_root, lmdb_size, signals, labels, tag=''):
 
 
 def construct_lmdb_dataset(input_path, output_path, dataset_type):
-
-    if dataset_type == 'deap':
+    if dataset_type.lower() == 'deap':
         signals_raw, labels_raw, label_name = _load_raw_data_deap(input_path)
         MAP_SIZE_MULTIPLER = 3
-    elif dataset_type == 'dreamer':
+    elif dataset_type.lower() == 'dreamer':
         signals_raw, labels_raw, label_name = _load_raw_data_dreamer(input_path)
         MAP_SIZE_MULTIPLER = 3
 
@@ -184,8 +191,8 @@ def construct_lmdb_dataset(input_path, output_path, dataset_type):
         test_records = construct_lmdb(test_root, test_map_size, test_signal,
                                       test_label, 'test')
 
-        test_lmdb_dataset(train_root, batch_size=256)
-        test_lmdb_dataset(test_root, batch_size=256)
+        test_lmdb_dataset(os.path.join(output_path, f'{i}'), batch_size=256)
+        test_lmdb_dataset(os.path.join(output_path, f'{i}'), batch_size=256)
 
         print('-----LMDB Records-----')
         print('Train path: ', train_root)
@@ -225,12 +232,12 @@ def main(argv):
             argv, "hd:i:o:s:", ["dataset_type=", "input_path=", "output_path="])
     except getopt.GetoptError:
         print(
-            'lmdb_generate.py -i <inputpath> -o <outputpath> -d <dataset_type>')
+            'lmdb_generate_rev.py -i <inputpath> -o <outputpath> -d <dataset_type>')
         sys.exit(2)
     for opt, arg in opts:
         if opt == '-h':
             print(
-                'lmdb_generate.py -i <inputpath> -o <outputpath> -d <dataset_type>'
+                'lmdb_generate_rev.py -i <inputpath> -o <outputpath> -d <dataset_type>'
             )
             sys.exit()
         elif opt in ("-i", "--input_path"):
@@ -238,13 +245,12 @@ def main(argv):
         elif opt in ("-o", "--output_path"):
             output_path = arg
         elif opt in ("-d", "--dataset_type"):
-            dataset_type = args
+            dataset_type = arg
 
     assert input_path is not None, 'Input path should be specified.'
     assert output_path is not None, 'Output path should be specified.'
 
     construct_lmdb_dataset(input_path, output_path, dataset_type)
-    test_lmdb_dataset(output_path)
 
 
 if __name__ == "__main__":
