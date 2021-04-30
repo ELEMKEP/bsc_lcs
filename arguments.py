@@ -15,6 +15,8 @@ def _add_data_arguments(parser):
     ### Data
     parser.add_argument('--dataset', type=str, default='deap',
                         help='Dataset type (deap, dreamer)')
+    parser.add_argument('--label', type=str, default='video',
+                        help='Label type (video, valence, arousal)')
     parser.add_argument('--data-path', type=str, default='E:\\lmdb\\',
                         help='Path for data.')
     parser.add_argument(

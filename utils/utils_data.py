@@ -60,3 +60,27 @@ def transform_dreamer_label_video(datum):
     labels_r[datum.trial] = 1.
     label = torch.FloatTensor(labels_r)
     return label
+
+
+def transform_deap_label_valence(datum):
+    labels_r = np.reshape(datum.ldata, datum.lshape)
+    label = int(labels_r[0] >= 5)  # TODO: check whether 5 is valid
+    return label
+
+
+def transform_deap_label_arousal(datum):
+    labels_r = np.reshape(datum.ldata, datum.lshape)
+    label = int(labels_r[1] >= 5)  # TODO: check whether 5 is valid
+    return label
+
+
+def transform_dreamer_label_valence(datum):
+    labels_r = np.reshape(datum.ldata, datum.lshape)
+    label = int(labels_r[0] >= 3)  # TODO: check whether 3 is valid
+    return label
+
+
+def transform_dreamer_label_arousal(datum):
+    labels_r = np.reshape(datum.ldata, datum.lshape)
+    label = int(labels_r[1] >= 3)  # TODO: check whether 3 is valid
+    return label
