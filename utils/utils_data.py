@@ -37,7 +37,7 @@ def load_lmdb_kfold_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,
     lmdb_list = os.listdir(lmdb_root)
     
     for d in lmdb_list:
-        fold_path = os.path.join(BASE_PATH, d)
+        fold_path = os.path.join(lmdb_root, d)
         
         train_root = os.path.join(fold_path, 'train/')
         test_root = os.path.join(fold_path, 'test/')
@@ -88,23 +88,31 @@ def transform_dreamer_label_video(datum):
 
 def transform_deap_label_valence(datum):
     labels_r = np.reshape(datum.ldata, datum.lshape)
-    label = int(labels_r[0] >= 5)  # TODO: check whether 5 is valid
-    return label
+    label = [1, 0] if labels_r[0] >= 5 else [0, 1]
+    
+    # TODO: check whether 5 is valid
+    return torch.FloatTensor(label)
 
 
 def transform_deap_label_arousal(datum):
     labels_r = np.reshape(datum.ldata, datum.lshape)
-    label = int(labels_r[1] >= 5)  # TODO: check whether 5 is valid
-    return label
+    label = [1, 0] if labels_r[1] >= 5 else [0, 1]
+    
+    # TODO: check whether 5 is valid
+    return torch.FloatTensor(label)
 
 
 def transform_dreamer_label_valence(datum):
     labels_r = np.reshape(datum.ldata, datum.lshape)
-    label = int(labels_r[0] >= 3)  # TODO: check whether 3 is valid
-    return label
+    label = [1, 0] if labels_r[0] >= 3 else [0, 1]
+    
+    # TODO: check whether 3 is valid
+    return torch.FloatTensor(label)
 
 
 def transform_dreamer_label_arousal(datum):
     labels_r = np.reshape(datum.ldata, datum.lshape)
-    label = int(labels_r[1] >= 3)  # TODO: check whether 3 is valid
-    return label
+    label = [1, 0] if labels_r[1] >= 3 else [0, 1]
+
+    # TODO: check whether 3 is valid
+    return torch.FloatTensor(label)
