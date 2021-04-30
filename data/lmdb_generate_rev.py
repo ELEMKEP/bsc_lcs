@@ -143,8 +143,8 @@ def construct_lmdb_dataset(input_path, output_path, dataset_type):
     signals_div, labels_div = divide_signal(signals_raw, labels_raw, 128, 3, 2,
                                             axis=0)
 
-    indices_list = [[0, 12, 0, 9], [9, 24, 12, 21], [21, 36, 24, 33],
-                    [33, 48, 36, 45], [45, 58, 48, 57]]
+    indices_list = [[0, 12, 0, 10], [10, 24, 12, 22], [22, 36, 24, 34],
+                    [34, 48, 36, 46], [46, 58, 48, 58]]
 
     for i, indices in enumerate(indices_list):
         train_l, train_r, test_l, test_r = indices
