@@ -104,7 +104,7 @@ def train(epoch, best_val_loss, args, params):
     """
     Main train function for a single epoch.
     """
-    train_loader, valid_loader, _ = params['loaders']
+    train_loader, test_loader = params['loaders']
     encoder = params['encoder']
     decoder = params['decoder']
     optimizer = params['optimizer']
@@ -152,16 +152,16 @@ def train(epoch, best_val_loss, args, params):
         ent_train.append(loss_ent.detach().item())
         loss_train.append(loss.detach().item())
 
-    acc_valid = []
-    ent_valid = []
-    loss_valid = []
+    acc_test = []
+    ent_test = []
+    loss_test = []
 
     encoder.eval()
     decoder.eval()
 
-    valid_iterable = tqdm(valid_loader)
-    for index, (data, labels) in enumerate(valid_iterable):
-        valid_iterable.set_description("Epoch{:3} Valid".format(epoch + 1))
+    test_iterable = tqdm(test_loader)
+    for index, (data, labels) in enumerate(test_iterable):
+        test_iterable.set_description("Epoch{:3} Valid".format(epoch + 1))
 
         data = data[:, :, :args.timesteps, :]
         if args.cuda:
@@ -187,48 +187,48 @@ def train(epoch, best_val_loss, args, params):
             label_acc = label_accuracy(output, labels)
             loss = loss_ent
 
-        acc_valid.append(label_acc.detach().item())
-        ent_valid.append(loss_ent.detach().item())
-        loss_valid.append(loss.detach().item())
+        acc_test.append(label_acc.detach().item())
+        ent_test.append(loss_ent.detach().item())
+        loss_test.append(loss.detach().item())
 
     acc_train_m = np.mean(acc_train)
     ent_train_m = np.mean(ent_train)
     loss_train_m = np.mean(loss_train)
 
-    acc_valid_m = np.mean(acc_valid)
-    ent_valid_m = np.mean(ent_valid)
-    loss_valid_m = np.mean(loss_valid)
+    acc_test_m = np.mean(acc_test)
+    ent_test_m = np.mean(ent_test)
+    loss_test_m = np.mean(loss_test)
 
     if use_tensorboard:
         writer.add_scalar('train/Accuracy', acc_train_m, epoch + 1)
         writer.add_scalar('train/CrossEntropy', ent_train_m, epoch + 1)
         writer.add_scalar('train/TotalLoss', loss_train_m, epoch + 1)
 
-        writer.add_scalar('valid/Accuracy', acc_valid_m, epoch + 1)
-        writer.add_scalar('valid/CrossEntropy', ent_valid_m, epoch + 1)
-        writer.add_scalar('valid/TotalLoss', loss_valid_m, epoch + 1)
+        writer.add_scalar('test/Accuracy', acc_test_m, epoch + 1)
+        writer.add_scalar('test/CrossEntropy', ent_test_m, epoch + 1)
+        writer.add_scalar('test/TotalLoss', loss_test_m, epoch + 1)
 
     with redirect_stdout(open(args.out, 'a')):
         out_string = ''.join(
             ('Epoch: {:04d}\n', 'acc_train: {:.6f}, ', 'ent_train: {:.6f}, ',
-             'loss_train: {:.6f}, ', 'acc_valid: {:.6f}, ',
-             'ent_valid: {:.6f}, ', 'loss_valid: {:.6f}, ', 'time: {:.4f}s'))
+             'loss_train: {:.6f}, ', 'acc_test: {:.6f}, ', 'ent_test: {:.6f}, ',
+             'loss_test: {:.6f}, ', 'time: {:.4f}s'))
         print(
             out_string.format(epoch, acc_train_m, ent_train_m, loss_train_m,
-                              acc_valid_m, ent_valid_m, loss_valid_m,
+                              acc_test_m, ent_test_m, loss_test_m,
                               time.time() - t_start))
         if args.save_folder and loss_valid_m < best_val_loss:
             torch.save(encoder.state_dict(), encoder_file)
             torch.save(decoder.state_dict(), decoder_file)
-            print('Best model so far, saving...')
-    return loss_valid_m
+
+    return loss_test_m
 
 
 def test(args, params):
     """
     Main test function after the training finishes.
     """
-    _, _, test_loader = params['loaders']
+    train_loader, test_loader = params['loaders']
     encoder = params['encoder']
     decoder = params['decoder']
     rel_rec = params['rel_rec']
@@ -265,25 +265,11 @@ def test(args, params):
         ent_test.append(loss_ent.detach().item())
         loss_test.append(loss.detach().item())
 
-    metric_dict = {}
-
     acc_test_m = np.mean(acc_test)
     ent_test_m = np.mean(ent_test)
     loss_test_m = np.mean(loss_test)
 
-    metric_dict['acc_test'] = acc_test_m
-    metric_dict['xent_test'] = ent_test_m
-    metric_dict['loss_test'] = loss_test_m
-
-    with redirect_stdout(open(args.out, 'a')):
-        print('--------------------------------')
-        print('------------Testing-------------')
-        print('--------------------------------')
-        print('acc_test: {:.10f}\n'.format(acc_test_m),
-              'ent_test: {:.10f}\n'.format(ent_test_m),
-              'loss_test: {:.10f}\n'.format(loss_test_m))
-
-    return metric_dict
+    return acc_test_m, ent_test_m, loss_test_m
 
 
 def main():
@@ -344,56 +330,96 @@ def main():
 
         return data_t, label_t
 
-    loaders = load_lmdb_dataset(lmdb_root=args.data_path,
-                                batch_size=args.batch_size, transform=transform,
-                                shuffle=True)
+    loaders_kfold = load_lmdb_kfold_dataset(lmdb_root=args.data_path,
+                                            batch_size=args.batch_size,
+                                            transform=transform, shuffle=True)
 
-    encoder, decoder = _construct_model(args)
-    rel_rec, rel_send = _construct_auxiliary_parameters(args)
-    rel_rec, rel_send = _make_cuda((encoder, decoder), (rel_rec, rel_send),
-                                   args)
-    optimizer, scheduler = _construct_optimizer((encoder, decoder), args)
-
-    param_dict.update({
-        'loaders': loaders,
-        'encoder': encoder,
-        'decoder': decoder,
-        'optimizer': optimizer,
-        'scheduler': scheduler,
-        'rel_rec': rel_rec,
-        'rel_send': rel_send
-    })
+    acc_test_list = []
+    ent_test_list = []
+    loss_test_list = []
 
     if args.tensorboard:
         import socket
         log_dir = os.path.join(
-            'runs', timestamp + '_' + args.out + '_' + socket.gethostname())
+            'runs', args.out + '_' + timestamp + '_' + socket.gethostname())
         writer = SummaryWriter(logdir=log_dir)
         param_dict['writer'] = writer
 
-    # Train model
-    best_val_loss = np.inf
-    best_epoch = 0
-    for epoch in range(args.epochs):
-        val_loss = train(epoch, best_val_loss, args, param_dict)
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_epoch = epoch
+    for kf, (train_loader, test_loader) in enumerate(loaders_kfold):
+        loaders = (train_loader, test_loader)
 
-    with redirect_stdout(open(args.out, 'a')):
-        print("Optimization Finished!")
-        print("Best Epoch: {:04d}".format(best_epoch + 1))
-        if args.save_folder:
-            print("Best Epoch: {:04d}".format(best_epoch + 1), file=log)
-            log.flush()
+        encoder, decoder = _construct_model(args)
+        rel_rec, rel_send = _construct_auxiliary_parameters(args)
+        rel_rec, rel_send = _make_cuda((encoder, decoder), (rel_rec, rel_send),
+                                       args)
+        optimizer, scheduler = _construct_optimizer((encoder, decoder), args)
 
-    # Test model
-    metric_dict = test(args, param_dict)
-    if log is not None:
-        print(save_folder)
-        log.close()
+        param_dict.update({
+            'loaders': loaders,
+            'encoder': encoder,
+            'decoder': decoder,
+            'optimizer': optimizer,
+            'scheduler': scheduler,
+            'rel_rec': rel_rec,
+            'rel_send': rel_send
+        })
 
-    if writer is not None:
+        # Train model
+        best_val_loss = np.inf
+        best_epoch = 0
+        for epoch in range(args.epochs):
+            val_loss = train(epoch, best_val_loss, args, param_dict)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch = epoch
+
+        with redirect_stdout(open(args.out, 'a')):
+            print(f'Fold {kf} - Best epoch: {best_epoch+1:04d}')
+            if args.save_folder:
+                print(f'Fold {kf} - Best epoch: {best_epoch+1:04d}', file=log)
+                log.flush()
+
+        acc_test, ent_test, loss_test = test(args, param_dict)
+
+        acc_test_list.append(acc_test)
+        ent_test_list.append(ent_test)
+        loss_test_list.append(loss_test)
+
+    acc_fold_m = np.mean(acc_test_list)
+    ent_fold_m = np.mean(ent_test_list)
+    loss_fold_m = np.mean(loss_test_list)
+
+    metric_dict = {
+        'accuracy': acc_fold_m,
+        'loss': loss_fold_m,
+        'list_accuracy': acc_test_list,
+        'list_loss': loss_test_list
+    }
+
+    if (writer is not None):
+        arg_dict = vars(args)
+
+        key_list = [
+            'dataset',
+            'label',
+            'epochs',
+            'batch_size',
+            'lr',
+            'beta1',
+            'beta2',
+            'lr_decay',
+            'gamma',
+            'edge_types',
+            'skip_first',
+            'temp',
+            'threshold',
+            'encoder_hidden',
+            'decoder_hidden',
+            'encoder_dropout',
+            'decoder_dropout',
+        ]
+        filtered_arg_dict = {k: arg_dict[k] for k in key_list}
+
         if args.deterministic_sampling:
             gsample = 'DET'
         elif args.hard:
@@ -401,15 +427,15 @@ def main():
         else:
             gsample = 'CON'
 
-        hparam_dict = {
-            'lr': args.lr,
-            'sampling': gsample,
-            'enc_hid': args.encoder_hidden,
-            'dec_hid': args.decoder_hidden,
-        }
-        writer.add_text('parameters', str(hparam_dict), 0)
+        filtered_arg_dict['samling'] = gsample
+
+        writer.add_text('parameters', str(filtered_arg_dict), 0)
         writer.add_text('metrics', str(metric_dict), 0)
         writer.close()
+
+    if log is not None:
+        print(save_folder)
+        log.close()
 
 
 if __name__ == "__main__":

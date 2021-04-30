@@ -32,6 +32,30 @@ def load_lmdb_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,
     # Library function for LMDBloading
 
 
+def load_lmdb_kfold_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,
+                            transform=None, shuffle=True, print_dataset=False):
+    lmdb_list = os.listdir(lmdb_root)
+    
+    for d in lmdb_list:
+        fold_path = os.path.join(BASE_PATH, d)
+        
+        train_root = os.path.join(fold_path, 'train/')
+        test_root = os.path.join(fold_path, 'test/')
+
+        train_dataset = dataset(root=train_root, transform=transform)
+        test_dataset = dataset(root=test_root, transform=transform)
+        
+        train_loader = DataLoader(train_dataset, batch_size=batch_size,
+                                  shuffle=shuffle)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        
+        if print_dataset:
+            print(train_dataset)
+            print(test_dataset)
+            
+        yield train_loader, test_loader
+
+
 def transform_deap_data_raw(datum):
     data_r = np.reshape(datum.ddata, datum.dshape)
     data_r = data_r / 32.1079  # mean is close to 0, global std
