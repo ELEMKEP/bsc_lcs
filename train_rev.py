@@ -3,6 +3,7 @@ import time
 import pickle
 import datetime
 from contextlib import redirect_stdout
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -208,7 +209,7 @@ def train(epoch, best_val_loss, args, params):
         writer.add_scalar('test/CrossEntropy', ent_test_m, epoch + 1)
         writer.add_scalar('test/TotalLoss', loss_test_m, epoch + 1)
 
-    with redirect_stdout(open(args.out, 'a')):
+    with redirect_stdout(params['log']):
         out_string = ''.join(
             ('Epoch: {:04d}\n', 'acc_train: {:.6f}, ', 'ent_train: {:.6f}, ',
              'loss_train: {:.6f}, ', 'acc_test: {:.6f}, ', 'ent_test: {:.6f}, ',
@@ -217,7 +218,7 @@ def train(epoch, best_val_loss, args, params):
             out_string.format(epoch, acc_train_m, ent_train_m, loss_train_m,
                               acc_test_m, ent_test_m, loss_test_m,
                               time.time() - t_start))
-        if args.save_folder and loss_valid_m < best_val_loss:
+        if args.save_folder and loss_test_m < best_val_loss:
             torch.save(encoder.state_dict(), encoder_file)
             torch.save(decoder.state_dict(), decoder_file)
 
@@ -288,27 +289,28 @@ def main():
 
     # Save model and meta-data. Always saves in a new sub-folder.
     if args.save_folder:
+        # Define log folder and make the directory
         timestamp = datetime.datetime.now().isoformat().replace(':', '-')
-        save_folder = '{}/exp{}_{}/'.format(args.save_folder, timestamp,
-                                            args.out)
-        os.mkdir(save_folder)
+        save_folder = '{}/{}_{}/'.format(args.save_folder, args.out, timestamp)
+        Path(save_folder).mkdir(parents=True, exist_ok=True)
+
         meta_file = os.path.join(save_folder, 'metadata.pkl')
         encoder_file = os.path.join(save_folder, 'encoder.pt')
         decoder_file = os.path.join(save_folder, 'decoder.pt')
+        log = open(os.path.join(save_folder, 'log.txt'), 'w')
 
-        log_file = os.path.join(save_folder, 'log.txt')
-        log = open(log_file, 'w')
-
-        pickle.dump({'args': args}, open(meta_file, "wb"))
+        pickle.dump({'args': vars(args)}, open(meta_file, "wb"))
 
         param_dict.update({
             'save_folder': save_folder,
             'encoder_file': encoder_file,
-            'decoder_file': decoder_file
+            'decoder_file': decoder_file,
+            'log': log
         })
     else:
         print("WARNING: No save_folder provided!" +
               "Testing (within this script) will throw an error.")
+        log = open(args.out, 'w')
 
     def transform(datum):
         if args.dataset == 'deap':
@@ -340,9 +342,11 @@ def main():
 
     if args.tensorboard:
         import socket
-        log_dir = os.path.join(
-            'runs', args.out + '_' + timestamp + '_' + socket.gethostname())
-        writer = SummaryWriter(logdir=log_dir)
+        if not args.save_folder:
+            tb_log_dir = 'logs/tensorboard'
+        else:
+            tb_log_dir = save_folder
+        writer = SummaryWriter(logdir=tb_log_dir)
         param_dict['writer'] = writer
 
     for kf, (train_loader, test_loader) in enumerate(loaders_kfold):
@@ -373,7 +377,7 @@ def main():
                 best_val_loss = val_loss
                 best_epoch = epoch
 
-        with redirect_stdout(open(args.out, 'a')):
+        with redirect_stdout(log):
             print(f'Fold {kf} - Best epoch: {best_epoch+1:04d}')
             if args.save_folder:
                 print(f'Fold {kf} - Best epoch: {best_epoch+1:04d}', file=log)
