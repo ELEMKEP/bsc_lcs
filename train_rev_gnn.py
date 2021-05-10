@@ -14,7 +14,7 @@ from torch.optim import lr_scheduler
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
-import arguments
+import arguments_gnn
 from model.modules import MLPEncoder, Feat_GNN
 from model.module_dgcnn import DGCNN, DGCNN_V2, DGCNN_V2_Reverse
 from utils.utils_math import encode_onehot, sample_graph
@@ -49,11 +49,8 @@ def load_graph_file(args):
     return graphs, perm
 
 
-def _construct_dgcnn_model(args):
+def _construct_model(args):
     graphs, perm = load_graph_file(args)
-
-    if isinstance(args.encoder_hidden, list):
-        args.encoder_hidden = args.encoder_hidden[0]
 
     if args.label == 'video':
         if args.dataset == 'deap':
@@ -72,8 +69,8 @@ def _construct_dgcnn_model(args):
             model_type = DGCNN_V2
         elif args.model == 'dgcnn_v2_rev':
             model_type = DGCNN_V2_Reverse
-        model = model_type(F_in, args.encoder_hidden, decoder_out_dim,
-                           graphs[0], 4, True, 0.2)
+        model = model_type(F_in, args.hidden, decoder_out_dim, graphs[0], 4,
+                           True, 0.2)
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')
@@ -254,7 +251,7 @@ def main():
     """
     Main function for training.
     """
-    args = arguments.parse()
+    args = arguments_gnn.parse()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
     np.random.seed(args.seed)
@@ -384,25 +381,10 @@ def main():
             'beta2',
             'lr_decay',
             'gamma',
-            'edge_types',
-            'skip_first',
-            'temp',
-            'threshold',
-            'encoder_hidden',
-            'decoder_hidden',
-            'encoder_dropout',
-            'decoder_dropout',
+            'hidden',
+            'dropout',
         ]
         filtered_arg_dict = {k: arg_dict[k] for k in key_list}
-
-        if args.deterministic_sampling:
-            gsample = 'DET'
-        elif args.hard:
-            gsample = 'STO'
-        else:
-            gsample = 'CON'
-
-        filtered_arg_dict['samling'] = gsample
 
         writer.add_text('parameters', str(filtered_arg_dict), 0)
         writer.add_text('metrics', str(metric_dict), 0)
