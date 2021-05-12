@@ -17,6 +17,7 @@ from tensorboardX import SummaryWriter
 import arguments_gnn
 from model.modules import MLPEncoder, Feat_GNN
 from model.module_dgcnn import DGCNN, DGCNN_V2, DGCNN_V2_Reverse
+from model.module_chebnet import DEAP_ChebNet
 from utils.utils_math import encode_onehot, sample_graph
 from utils.utils_loss import label_accuracy, label_cross_entropy
 from utils.utils_miscellaneous import graph_to_image
@@ -51,25 +52,26 @@ def load_graph_file(args):
 def _construct_loaders(args, perm):
 
     def transform(datum):
-        if args.dataset == 'deap':
-            data_t = transform_deap_data_raw(datum)
-            if args.label == 'video':
-                label_t = transform_deap_label_video(datum)
-            elif args.label == 'valence':
-                label_t = transform_deap_label_valence(datum)
-            elif args.label == 'arousal':
-                label_t = transform_deap_label_arousal(datum)
-        elif args.dataset == 'dreamer':
-            data_t = transform_dreamer_data_raw(datum)
-            if args.label == 'video':
-                label_t = transform_dreamer_label_video(datum)
-            elif args.label == 'valence':
-                label_t = transform_dreamer_label_valence(datum)
-            elif args.label == 'arousal':
-                label_t = transform_dreamer_label_arousal(datum)
-
         if args.model in ['chebnet']:
+            data_t = transform_eeg_specent(datum)
             data_t = transform_chebnet_permutation(data_t, perm)
+        else:
+            if args.dataset == 'deap':
+                data_t = transform_deap_data_raw(datum)
+                if args.label == 'video':
+                    label_t = transform_deap_label_video(datum)
+                elif args.label == 'valence':
+                    label_t = transform_deap_label_valence(datum)
+                elif args.label == 'arousal':
+                    label_t = transform_deap_label_arousal(datum)
+            elif args.dataset == 'dreamer':
+                data_t = transform_dreamer_data_raw(datum)
+                if args.label == 'video':
+                    label_t = transform_dreamer_label_video(datum)
+                elif args.label == 'valence':
+                    label_t = transform_dreamer_label_valence(datum)
+                elif args.label == 'arousal':
+                    label_t = transform_dreamer_label_arousal(datum)
 
         return data_t, label_t
 
@@ -100,6 +102,13 @@ def _construct_model(args, graphs):
             model_type = DGCNN_V2_Reverse
         model = model_type(F_in, args.hidden, decoder_out_dim, graphs[0], 4,
                            args.cuda, True)
+    elif args.model == 'chebnet':
+        MM = [512, decoder_out_dim]
+        FF = [32, 64]
+        KK = [4, 9]
+        PP = [2, 2]
+
+        model = DEAP_ChebNet(graphs, FF, KK, PP, MM, Fin=8)
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')

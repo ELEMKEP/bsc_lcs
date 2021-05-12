@@ -1,11 +1,7 @@
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-
-from utils.utils_math import get_offdiag_indices, gumbel_softmax
-from chebnet_lib import coarsening, graph
 
 _EPS = 1e-10
 

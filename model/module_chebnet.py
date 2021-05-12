@@ -1,12 +1,9 @@
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from utils_math import get_offdiag_indices, gumbel_softmax
-from chebnet_lib import coarsening, graph
-from deap_modules import Conv1DInception
+from chebnet_lib import graph
 
 _EPS = 1e-10
 
@@ -173,141 +170,5 @@ class DEAP_ChebNet(nn.Module):
         x = self.fc_logit(x)
         # print('Last output: ')
         # print(x)
-
-        return x
-
-
-class DEAP_ChebNet_V2(nn.Module):
-    """ Virtual node-based output """
-
-    def __init__(self, n_obj, n_time, _L, perm, _F, _K, _P, _M, Fin=1,
-                 is_cuda=True):
-        super(DEAP_ChebNet_V2, self).__init__()
-
-        self.n_obj = n_obj
-        self.n_time = n_time
-        self.perm = perm
-        self.is_cuda = is_cuda
-        self.device = torch.device('cuda') if is_cuda else torch.device('cpu')
-
-        assert (len(_F) == len(_K) ==
-                len(_P)), 'List length of _F, _K, _P should be same'
-
-        j = 0
-        self._L = []
-        for pp in _P:
-            self._L.append(_L[j])
-            j += int(np.log2(pp)) if pp > 1 else 0
-
-        self._F, self._K, self._P, self._M = _F, _K, _P, _M
-        self.n_layers = len(_F)
-
-        ##### ConvInception Layers
-        out_cnn = 8
-        depth = 4
-        self.cnn = nn.Sequential(
-            Conv1DInception(1, out_cnn, 3, depth),
-            nn.ReLU(),
-            nn.MaxPool1d(4),  # 96
-            Conv1DInception(out_cnn * depth, out_cnn, 3, depth),
-            nn.ReLU(),
-            nn.MaxPool1d(4),  # 24 
-            Conv1DInception(out_cnn * depth, out_cnn, 3, depth),
-            nn.ReLU(),
-            nn.MaxPool1d(4),  # 6
-        )
-        self.out_channel = out_cnn * depth
-        self.out_n_time = n_time // 64
-        self.cheb_feat = self.out_n_time * self.out_channel
-
-        indices = np.array(perm, dtype=np.int32)
-        # indices[indices >= n_obj] = n_obj
-        self.indices = torch.cuda.LongTensor(
-            np.tile(indices, [self.cheb_feat, 1]).transpose())
-
-        self.gcn_layers = nn.ModuleList()
-        self.pools = nn.ModuleList()
-
-        Fin = self.cheb_feat
-        for i, pp in enumerate(_P):
-            self.gcn_layers.append(
-                ChebyshevLayer(self._L[i], _K[i], Fin, _F[i], is_cuda=is_cuda))
-            Fin = _F[i]
-
-            if pp > 1:
-                self.pools.append(
-                    nn.MaxPool1d(kernel_size=pp, stride=pp, padding=0))
-            else:
-                self.pools.append(None)
-
-        N_fc = _L[j].shape[-1]
-        F_fc = self._F[-1]
-        Fin = N_fc * F_fc
-        self.fc_layers = nn.ModuleList()
-        self.bn_layers = nn.ModuleList()
-        for i, mm in enumerate(self._M[:-1]):
-            self.fc_layers.append(nn.Linear(Fin, mm))
-            self.bn_layers.append(nn.BatchNorm1d(mm))
-            Fin = mm
-
-        self.fc_logit = nn.Linear(Fin, self._M[-1])
-        # if is_cuda:
-        #     self.fc_logit.cuda()
-
-        self.init_weights()
-
-    def init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight.data)
-                m.bias.data.fill_(0.)
-
-    def forward(self, inputs):
-        # Graph convolutional layers.
-        if len(inputs.size()) == 3:
-            x = torch.unsqueeze(inputs, 3)  # N x M x F(T) x 1
-        else:
-            x = inputs
-
-        x = x.view(-1, self.n_time, 1)
-        x = x.transpose(1, 2).contiguous()
-        reduced = self.cnn(x)  # [BxA, D', T']
-        reduced = reduced.transpose(1, 2).contiguous()
-        reduced = reduced.view(-1, self.n_obj, self.cheb_feat)  # [B, A, T*D]
-
-        Nnew = self._L[0].shape[-1]
-        Nold = self.n_obj
-
-        zero_vec = torch.zeros(reduced.size(0), Nnew - Nold, reduced.size(2),
-                               dtype=torch.float32, device=self.device)
-        reduced_zv = torch.cat((reduced, zero_vec), dim=1)
-
-        indices = self.indices.repeat([reduced.size(0), 1, 1])
-        x = torch.zeros(reduced.size(0), Nnew, self.cheb_feat,
-                        dtype=torch.float32, device=self.device)  # [B, P, T*D]
-
-        x.scatter_(1, indices, reduced_zv)
-
-        def pool_func(x, pool):
-            x = torch.transpose(x, 2, 1)  # [B, Fout, N]
-            x = pool(x)
-            x = torch.transpose(x, 2, 1)  # [B, N/p, Fout]
-            return x
-
-        for i in range(self.n_layers):
-            x = self.gcn_layers[i](x)
-            pool = self.pools[i]
-            x = pool_func(x, pool) if (pool is not None) else x
-
-        # Fully connected hidden layers.
-        # Start work from here
-        B = inputs.size()[0]
-        x = x.contiguous().view(int(B), -1)  # N x F_all
-
-        for i, fc_layer in enumerate(self.fc_layers):
-            bn_layer = self.bn_layers[i]
-            x = bn_layer(F.relu(fc_layer(x)))
-
-        x = self.fc_logit(x)
 
         return x

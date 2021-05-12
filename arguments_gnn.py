@@ -1,9 +1,6 @@
 import argparse
 import os
 import sys
-from contextlib import redirect_stdout
-
-import numpy as np
 
 
 def _add_data_arguments(parser):
@@ -86,24 +83,6 @@ def _add_graph_arguments(parser):
         '--no-train-graph', action='store_true', default=False,
         help='Do not train graph for graph-training model (DGCNN, RGNN)')
 
-    # parser.add_argument('--edge-types', type=int, default=3,
-    #                     help='Number of edge types.')
-    # parser.add_argument(
-    #     '--skip-first', action='store_true', default=False,
-    #     help='Skip first edge type in decoder, i.e. it represents no-edge.')
-
-    # ### Graph sampling method ###
-    # parser.add_argument('--deterministic-sampling', action='store_true',
-    #                     default=False, help='Use deterministic sampling.')
-    # parser.add_argument(
-    #     '--hard', action='store_true', default=False,
-    #     help='Uses discrete samples in training forward pass in Gumbel-softmax.'
-    # )
-    # parser.add_argument('--temp', type=float, default=0.5,
-    #                     help='Temperature for Gumbel softmax.')
-    # parser.add_argument('--threshold', type=float, default=0.5,
-    #                     help='Threshold for deterministic sampling.')
-
 
 def _add_model_arguments(parser):
     ### Encoder and decoder
@@ -142,9 +121,6 @@ def parse():
     else:
         args.seed = args.seed
 
-    # with open(args.out, 'a') as f:
-    #     with redirect_stdout(f):
-    #         print(args)
     print(args)
 
     return args
