@@ -57,12 +57,10 @@ def _add_learning_arguments(parser):
     parser.add_argument('--timesteps', type=int, default=384,
                         help='The number of time steps per sample.')
 
-    parser.add_argument(
-        '--reg-order', type=int, default=1, help='Regularization order'
-    )
-    parser.add_argument(
-        '--reg', type=float, default=0., help='Regularization coefficient'
-    )
+    parser.add_argument('--reg-order', type=int, default=1,
+                        help='Regularization order')
+    parser.add_argument('--reg', type=float, default=0.,
+                        help='Regularization coefficient')
 
 
 def _add_graph_arguments(parser):
@@ -144,9 +142,9 @@ def parse():
     else:
         args.seed = args.seed
 
-    with open(args.out, 'a') as f:
-        with redirect_stdout(f):
-            print(args)
+    # with open(args.out, 'a') as f:
+    #     with redirect_stdout(f):
+    #         print(args)
     print(args)
 
     return args

@@ -119,9 +119,9 @@ def parse():
     else:
         args.seed = args.seed
 
-    with open(args.out, 'a') as f:
-        with redirect_stdout(f):
-            print(args)
+    # with open(args.out, 'a') as f:
+    #     with redirect_stdout(f):
+    #         print(args)
     print(args)
 
     return args

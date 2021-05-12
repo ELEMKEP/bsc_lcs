@@ -27,7 +27,6 @@ Revision code for valence and arousal
 
 
 def load_graph_file(args):
-    # Modified for v3
     if args.model in ['chebnet']:
         band_str = 'B8_coarsen'
     elif args.pre_graph_expand:
@@ -49,9 +48,39 @@ def load_graph_file(args):
     return graphs, perm
 
 
-def _construct_model(args):
-    graphs, perm = load_graph_file(args)
+def _construct_loaders(args, perm):
 
+    def transform(datum):
+        if args.dataset == 'deap':
+            data_t = transform_deap_data_raw(datum)
+            if args.label == 'video':
+                label_t = transform_deap_label_video(datum)
+            elif args.label == 'valence':
+                label_t = transform_deap_label_valence(datum)
+            elif args.label == 'arousal':
+                label_t = transform_deap_label_arousal(datum)
+        elif args.dataset == 'dreamer':
+            data_t = transform_dreamer_data_raw(datum)
+            if args.label == 'video':
+                label_t = transform_dreamer_label_video(datum)
+            elif args.label == 'valence':
+                label_t = transform_dreamer_label_valence(datum)
+            elif args.label == 'arousal':
+                label_t = transform_dreamer_label_arousal(datum)
+
+        if args.model in ['chebnet']:
+            data_t = transform_chebnet_permutation(data_t, perm)
+
+        return data_t, label_t
+
+    loaders_kfold = load_lmdb_kfold_dataset(lmdb_root=args.data_path,
+                                            batch_size=args.batch_size,
+                                            transform=transform, shuffle=True)
+
+    return loaders_kfold
+
+
+def _construct_model(args, graphs):
     if args.label == 'video':
         if args.dataset == 'deap':
             decoder_out_dim = 40
@@ -93,6 +122,7 @@ def _construct_optimizer(model, args):
 
     return optimizer, scheduler
 
+
 def _calculate_l1(model, args):
     if 'dgcnn' in args.model:
         params = list(model.layer.parameters()) + list(model.fc.parameters())
@@ -100,7 +130,7 @@ def _calculate_l1(model, args):
         params = list(model.parameters())
 
     l1 = 0
-    
+
     for param in params:
         l1 += torch.norm(param, p=args.reg_order)
 
@@ -301,34 +331,7 @@ def main():
               "Testing (within this script) will throw an error.")
         log = open(args.out, 'w')
 
-    def transform(datum):
-        if args.dataset == 'deap':
-            data_t = transform_deap_data_raw(datum)
-            if args.label == 'video':
-                label_t = transform_deap_label_video(datum)
-            elif args.label == 'valence':
-                label_t = transform_deap_label_valence(datum)
-            elif args.label == 'arousal':
-                label_t = transform_deap_label_arousal(datum)
-        elif args.dataset == 'dreamer':
-            data_t = transform_dreamer_data_raw(datum)
-            if args.label == 'video':
-                label_t = transform_dreamer_label_video(datum)
-            elif args.label == 'valence':
-                label_t = transform_dreamer_label_valence(datum)
-            elif args.label == 'arousal':
-                label_t = transform_dreamer_label_arousal(datum)
-
-        return data_t, label_t
-
-    loaders_kfold = load_lmdb_kfold_dataset(lmdb_root=args.data_path,
-                                            batch_size=args.batch_size,
-                                            transform=transform, shuffle=True)
-
-    acc_test_list = []
-    ent_test_list = []
-    loss_test_list = []
-
+    # TensorboardX support
     if args.tensorboard:
         import socket
         if not args.save_folder:
@@ -338,10 +341,19 @@ def main():
         writer = SummaryWriter(logdir=tb_log_dir)
         param_dict['writer'] = writer
 
+    # Load dataset
+    graphs, perm = load_graph_file(args)
+    loaders_kfold = _construct_loaders(args, perm)
+
+    # Loop saving
+    acc_test_list = []
+    ent_test_list = []
+    loss_test_list = []
+
     for kf, (train_loader, test_loader) in enumerate(loaders_kfold):
         loaders = (train_loader, test_loader)
 
-        model = _construct_model(args)
+        model = _construct_model(args, graphs)
         model.cuda()
 
         optimizer, scheduler = _construct_optimizer(model, args)

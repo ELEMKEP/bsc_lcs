@@ -116,3 +116,19 @@ def transform_dreamer_label_arousal(datum):
 
     # TODO: check whether 3 is valid
     return torch.FloatTensor(label)
+
+
+def transform_chebnet_permutation(data, perm):
+    N, T = data.size()
+    
+    perm = np.array(perm, dtype=np.int32)
+    NN = len(perm)
+    data_p = torch.zeros([NN, T], dtype=torch.float32)
+
+    select_idx = np.where(perm < N)
+    idx_dst = select_idx
+    idx_src = perm[select_idx]
+
+    data_p[idx_dst] = data[idx_src]
+
+    return data_p
