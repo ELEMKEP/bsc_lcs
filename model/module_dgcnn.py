@@ -4,9 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from utils_math import get_offdiag_indices, gumbel_softmax
+from utils.utils_math import get_offdiag_indices, gumbel_softmax
 from chebnet_lib import coarsening, graph
-from deap_modules import Conv1DInception
 
 _EPS = 1e-10
 
@@ -32,7 +31,6 @@ class ChebyshevLayer_DGCNN(nn.Module):
             if isinstance(m, nn.Conv1d):
                 nn.init.xavier_normal_(m.weight.data)
         nn.init.xavier_normal_(self.theta)
-        nn.init.xavier_normal_(self.W)
 
     def _laplacian(self, W):
         W = F.relu(W)
@@ -47,7 +45,7 @@ class ChebyshevLayer_DGCNN(nn.Module):
         B, N, Fin = inputs.size()  # should know the meaning of N, M, Fin
         # assert Fin == self.Fin, 'Given Fin of input is not same to self.Fin'
 
-        L = self._laplacian(self.W)
+        L = self._laplacian(W)
         x0 = inputs.permute(1, 2, 0).contiguous().view(
             N, -1)  # [N, Fin, B] => [N, Fin*B]
 
@@ -84,8 +82,8 @@ class DGCNN(nn.Module):
         self.device = torch.device('cuda') if is_cuda else torch.device('cpu')
 
         self.layer = ChebyshevLayer_DGCNN(K, F_in, F_hid, is_cuda)
-        self.fc1 = nn.Linear(self.n_obj * F_hid, F_hid)
-        self.fc2 = nn.Linear(F_hid, F_out)
+        self.fc = nn.Linear(self.n_obj * F_hid, F_out)
+        # self.fc2 = nn.Linear(F_hid, F_out)
 
         self.init_weights()
 
@@ -109,8 +107,11 @@ class DGCNN(nn.Module):
             x = torch.squeeze(inputs)
 
         x = self.layer(x, self.W)
-        x = F.relu(self.fc1(x.view(B, -1)))
-        x = self.fc2(x)
+        x = x.view(B, -1)
+        x = self.fc(x)
+
+        # x = F.relu(self.fc1(x.view(B, -1)))
+        # x = self.fc2(x)
 
         return x
 
@@ -121,7 +122,8 @@ class DGCNN_V2(nn.Module):
                  train_graph=True, rho=0.5):
         super(DGCNN_V2, self).__init__()
 
-        self.W = nn.Parameter(torch.FloatTensor(W_init),
+        W_temp = W_init.astype(np.float32).toarray()
+        self.W = nn.Parameter(torch.FloatTensor(W_temp),
                               requires_grad=train_graph)
         self.n_obj = self.W.size(0)
         self.is_cuda = is_cuda
@@ -171,7 +173,8 @@ class DGCNN_V2_Reverse(nn.Module):
                  train_graph=True, rho=0.5):
         super(DGCNN_V2_Reverse, self).__init__()
 
-        self.W = nn.Parameter(torch.FloatTensor(W_init),
+        W_temp = W_init.astype(np.float32).toarray()
+        self.W = nn.Parameter(torch.FloatTensor(W_temp),
                               requires_grad=train_graph)
         self.n_obj = self.W.size(0)
         self.is_cuda = is_cuda

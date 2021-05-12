@@ -70,7 +70,7 @@ def _construct_model(args):
         elif args.model == 'dgcnn_v2_rev':
             model_type = DGCNN_V2_Reverse
         model = model_type(F_in, args.hidden, decoder_out_dim, graphs[0], 4,
-                           True, 0.2)
+                           args.cuda, True)
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')
@@ -81,16 +81,30 @@ def _construct_model(args):
     return model
 
 
-def _construct_optimizer(models, args):
-    params = []
-    for model in models:
-        params = params + list(model.parameters())
+def _construct_optimizer(model, args):
+    if 'dgcnn' in args.model:
+        params = list(model.layer.parameters()) + list(model.fc.parameters())
+    else:
+        params = list(model.parameters())
 
     optimizer = optim.Adam(params, lr=args.lr, betas=(args.beta1, args.beta2))
     scheduler = lr_scheduler.StepLR(optimizer, step_size=args.lr_decay,
                                     gamma=args.gamma)
 
     return optimizer, scheduler
+
+def _calculate_l1(model, args):
+    if 'dgcnn' in args.model:
+        params = list(model.layer.parameters()) + list(model.fc.parameters())
+    else:
+        params = list(model.parameters())
+
+    l1 = 0
+    
+    for param in params:
+        l1 += torch.norm(param, p=args.reg_order)
+
+    return l1 * args.reg
 
 
 def _make_cuda(models, tensors, args):
@@ -141,7 +155,8 @@ def train(epoch, best_val_loss, args, params):
 
         loss_ent = label_cross_entropy(output, labels)
         label_acc = label_accuracy(output, labels)
-        loss = loss_ent
+        loss_reg = _calculate_l1(model, args)
+        loss = loss_ent + loss_reg
 
         loss.backward()
         optimizer.step()
@@ -169,7 +184,8 @@ def train(epoch, best_val_loss, args, params):
             output = model(data)
             loss_ent = label_cross_entropy(output, labels)
             label_acc = label_accuracy(output, labels)
-            loss = loss_ent
+            loss_reg = _calculate_l1(model, args)
+            loss = loss_ent + loss_reg
 
         acc_test.append(label_acc.detach().item())
         ent_test.append(loss_ent.detach().item())
@@ -234,6 +250,7 @@ def test(args, params):
 
             loss_ent = label_cross_entropy(output, labels)
             label_acc = label_accuracy(output, labels)
+            loss_reg = _calculate_l1(model, args)
             loss = loss_ent
 
         acc_test.append(label_acc.detach().item())
@@ -327,7 +344,7 @@ def main():
         model = _construct_model(args)
         model.cuda()
 
-        optimizer, scheduler = _construct_optimizer((model), args)
+        optimizer, scheduler = _construct_optimizer(model, args)
 
         param_dict.update({
             'loaders': loaders,
