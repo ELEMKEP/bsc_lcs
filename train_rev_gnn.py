@@ -52,6 +52,7 @@ def load_graph_file(args):
 def _construct_loaders(args, perm):
 
     def transform(datum):
+        # Data
         if args.model in ['chebnet']:
             data_t = transform_eeg_specent(datum)
             data_t = transform_chebnet_permutation(data_t, perm)
@@ -60,18 +61,22 @@ def _construct_loaders(args, perm):
                 data_t = transform_deap_data_raw(datum)
                 if args.label == 'video':
                     label_t = transform_deap_label_video(datum)
-                elif args.label == 'valence':
-                    label_t = transform_deap_label_valence(datum)
-                elif args.label == 'arousal':
-                    label_t = transform_deap_label_arousal(datum)
             elif args.dataset == 'dreamer':
                 data_t = transform_dreamer_data_raw(datum)
                 if args.label == 'video':
                     label_t = transform_dreamer_label_video(datum)
-                elif args.label == 'valence':
-                    label_t = transform_dreamer_label_valence(datum)
-                elif args.label == 'arousal':
-                    label_t = transform_dreamer_label_arousal(datum)
+
+        # Label
+        if args.dataset == 'deap':
+            if args.label == 'valence':
+                label_t = transform_deap_label_valence(datum)
+            elif args.label == 'arousal':
+                label_t = transform_deap_label_arousal(datum)
+        elif args.dataset == 'dreamer':
+            if args.label == 'valence':
+                label_t = transform_dreamer_label_valence(datum)
+            elif args.label == 'arousal':
+                label_t = transform_dreamer_label_arousal(datum)
 
         return data_t, label_t
 
