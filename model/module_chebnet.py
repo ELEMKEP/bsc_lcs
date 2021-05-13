@@ -19,7 +19,7 @@ class ChebyshevLayer(nn.Module):
 
         self.layer = nn.Linear(Fin * K, Fout, bias=False)
         # self.bn = nn.BatchNorm1d(L.shape[-1])
-        self.bn = nn.BatchNorm1d(Fin * K)
+        # self.bn = nn.BatchNorm1d(Fin * K)
 
         if is_cuda:
             self.L = self.L.cuda()
@@ -34,7 +34,7 @@ class ChebyshevLayer(nn.Module):
 
     def forward(self, inputs):
         B, N, Fin = inputs.size()  # should know the meaning of N, M, Fin
-        # assert Fin == self.Fin, 'Given Fin of input is not same to self.Fin'
+        assert Fin == self.Fin, 'Given Fin of input is not same to self.Fin'
 
         x0 = inputs.permute(1, 2, 0).contiguous().view(
             N, -1)  # [N, Fin, B] => [N, Fin*B]

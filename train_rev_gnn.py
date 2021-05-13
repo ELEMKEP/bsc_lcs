@@ -41,6 +41,7 @@ def load_graph_file(args):
                                                args.dataset,
                                                args.pre_graph_type, conn_str,
                                                band_str, binarize_str)
+
     with open(os.path.join(args.pre_graph_path, graph_file), 'rb') as f:
         graph_file = pickle.load(f)
     graphs = graph_file['graphs']
@@ -113,7 +114,7 @@ def _construct_model(args, graphs):
         KK = [4, 9]
         PP = [2, 2]
 
-        model = DEAP_ChebNet(graphs, FF, KK, PP, MM, Fin=8)
+        model = DEAP_ChebNet(graphs, FF, KK, PP, MM, Fin=args.dims)
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')
@@ -189,7 +190,7 @@ def train(epoch, best_val_loss, args, params):
     for index, (data, labels) in enumerate(train_iterable):
         train_iterable.set_description("Epoch{:3} Train".format(epoch + 1))
 
-        data = data[:, :, :args.timesteps, :]
+        # data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
@@ -219,7 +220,7 @@ def train(epoch, best_val_loss, args, params):
     for index, (data, labels) in enumerate(test_iterable):
         test_iterable.set_description("Epoch{:3} Valid".format(epoch + 1))
 
-        data = data[:, :, :args.timesteps, :]
+        # data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
@@ -284,7 +285,7 @@ def test(args, params):
     model.load_state_dict(torch.load(model_file))
 
     for index, (data, labels) in enumerate(tqdm(test_loader)):
-        data = data[:, :, :args.timesteps, :]
+        # data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
