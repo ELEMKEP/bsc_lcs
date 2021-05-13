@@ -169,3 +169,48 @@ def transform_eeg_specent(datum, band_to_node=True):
     data_r = torch.FloatTensor(data_r.astype(np.float32))
 
     return data_r  # [???, 1]
+
+
+def transform_data_de(datum, n_band=8):
+    data_r = np.reshape(datum.ddata, datum.dshape)
+    # m = np.mean(data_r, axis=1, keepdims=True)
+    # data_r = data_r - m
+
+    psd = scipy.signal.periodogram(data_r, fs=128, window='boxcar', nfft=256,
+                                   scaling='spectrum')[1]
+
+    C = 0.5 * np.log(2 * np.pi * np.e / datum.dshape[-1])
+    eps = np.finfo(np.float32).eps
+    de_func = lambda x: 0.5 * np.log(x + eps) + C
+
+    data_stack = []
+
+    if n_band == 8:
+        delta = np.sum(psd[..., 1:8], axis=-1)
+        theta = np.sum(psd[..., 8:16], axis=-1)
+        alpha_low = np.sum(psd[..., 16:21], axis=-1)
+        alpha_high = np.sum(psd[..., 21:26], axis=-1)
+        beta_low = np.sum(psd[..., 26:34], axis=-1)
+        beta_mid = np.sum(psd[..., 34:42], axis=-1)
+        beta_high = np.sum(psd[..., 42:60], axis=-1)
+        gamma = np.sum(psd[..., 60:100], axis=-1)
+
+        data_stack = [
+            delta, theta, alpha_low, alpha_high, beta_low, beta_mid, beta_high,
+            gamma
+        ]
+
+    elif n_band == 5:
+        delta = np.sum(psd[..., 2:7], axis=-1)
+        theta = np.sum(psd[..., 8:15], axis=-1)
+        alpha = np.sum(psd[..., 16:27], axis=-1)
+        beta = np.sum(psd[..., 28:61], axis=-1)
+        gamma = np.sum(psd[..., 62:100], axis=-1)
+
+        data_stack = [delta, theta, alpha, beta, gamma]
+
+    data_stack = np.stack([de_func(d) for d in data_stack],
+                          axis=-1)[..., np.newaxis]
+    data_stack = torch.FloatTensor(data_stack)
+
+    return data_stack
