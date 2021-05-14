@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim import lr_scheduler
 
@@ -15,12 +14,10 @@ from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
 import arguments_gnn
-from model.modules import MLPEncoder, Feat_GNN
 from model.module_dgcnn import DGCNN, DGCNN_V2, DGCNN_V2_Reverse
 from model.module_chebnet import DEAP_ChebNet
-from utils.utils_math import encode_onehot, sample_graph
+from model.module_stgcn import STGCN
 from utils.utils_loss import label_accuracy, label_cross_entropy
-from utils.utils_miscellaneous import graph_to_image
 from utils.utils_data import *
 '''
 Revision code for valence and arousal
@@ -115,6 +112,11 @@ def _construct_model(args, graphs):
         PP = [2, 2]
 
         model = DEAP_ChebNet(graphs, FF, KK, PP, MM, Fin=args.dims)
+    elif 'stgcn' in args.model:
+        # model keyword should be stgcn_<size>. <size> = ['full', 'medium', 'small']
+        model_split = args.model.split('_')
+        model = STGCN(1, decoder_out_dim, graphs[0], False,
+                      model_size=model_split[1])
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')
