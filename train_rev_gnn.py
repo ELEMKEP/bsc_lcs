@@ -17,7 +17,9 @@ import arguments_gnn
 from model.module_dgcnn import DGCNN, DGCNN_V2, DGCNN_V2_Reverse
 from model.module_chebnet import DEAP_ChebNet
 from model.module_stgcn import STGCN
+from model.module_iag import IAG
 from utils.utils_loss import label_accuracy, label_cross_entropy
+import utils.utils_data
 from utils.utils_data import *
 '''
 Revision code for valence and arousal
@@ -56,25 +58,39 @@ def _construct_loaders(args, perm):
             data_t = transform_chebnet_permutation(data_t, perm)
         else:
             if args.dataset == 'deap':
-                data_t = transform_deap_data_raw(datum)
-                if args.label == 'video':
-                    label_t = transform_deap_label_video(datum)
+                if data == 'raw':
+                    data_t = transform_deap_data_raw(datum)
+                elif data == 'specent':
+                    data_t = transform_eeg_specent(datum)
+                elif data == 'de':
+                    data_t = transform_data_de(datum)
             elif args.dataset == 'dreamer':
-                data_t = transform_dreamer_data_raw(datum)
-                if args.label == 'video':
-                    label_t = transform_dreamer_label_video(datum)
+                if data == 'raw':
+                    data_t = transform_dreamer_data_raw(datum)
+                elif data == 'specent':
+                    data_t = transform_eeg_specent(datum)
+                elif data == 'de':
+                    data_t = transform_data_de(datum)
 
         # Label
-        if args.dataset == 'deap':
-            if args.label == 'valence':
-                label_t = transform_deap_label_valence(datum)
-            elif args.label == 'arousal':
-                label_t = transform_deap_label_arousal(datum)
-        elif args.dataset == 'dreamer':
-            if args.label == 'valence':
-                label_t = transform_dreamer_label_valence(datum)
-            elif args.label == 'arousal':
-                label_t = transform_dreamer_label_arousal(datum)
+        label_func_str = f'transform_{args.dataset}_label_{args.label}'
+        label_func = getattr(utils.utils_data, label_func_str)
+        label_t = label_func(datum)
+
+        # if args.dataset == 'deap':
+        #     if args.label == 'video':
+        #         label_t = transform_deap_label_video(datum)
+        #     elif args.label == 'valence':
+        #         label_t = transform_deap_label_valence(datum)
+        #     elif args.label == 'arousal':
+        #         label_t = transform_deap_label_arousal(datum)
+        # elif args.dataset == 'dreamer':
+        #     if args.label == 'video':
+        #         label_t = transform_dreamer_label_video(datum)
+        #     elif args.label == 'valence':
+        #         label_t = transform_dreamer_label_valence(datum)
+        #     elif args.label == 'arousal':
+        #         label_t = transform_dreamer_label_arousal(datum)
 
         return data_t, label_t
 
@@ -117,6 +133,13 @@ def _construct_model(args, graphs):
         model_split = args.model.split('_')
         model = STGCN(1, decoder_out_dim, graphs[0], False,
                       model_size=model_split[1])
+    elif args.model == 'iag':
+        if args.dataset == 'deap':
+            cmap = None
+        elif args.dataset == 'dreamer':
+            cmap = None
+        model = IAG(args.num_objects, 5, decoder_out_dim, 32, 64, 8,
+                    coarsening_map=cmap)
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')
