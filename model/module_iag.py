@@ -45,7 +45,7 @@ class IAG(nn.Module):
         # if batch_first=True, (batch, seq_len, feature)
         #   - seq_len: same to #node --> #region
         #   - batch: batch
-        self.lstm = nn.LSTM(input_size=len(self.Cmap), hidden_size=hid_lstm,
+        self.lstm = nn.LSTM(input_size=hid_gcn, hidden_size=hid_lstm,
                             num_layers=1, batch_first=True)
         '''
         input: (seq_len, batch, input_size)
@@ -67,6 +67,10 @@ class IAG(nn.Module):
     def _coarsen(self, y):
         # Graph coarsening operation
         # y.shape = [B, N, Fhid]
+
+        if not self.Cmap:  # do not coarsen
+            return y
+
         z_list = []
         for region in self.Cmap:
             y_src = torch.gather(y, dim=1,
