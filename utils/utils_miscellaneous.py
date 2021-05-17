@@ -57,3 +57,14 @@ def baseline_multiclass(train_data, train_labels, test_data, test_labels, args):
     print('Test F1 (weighted):  {}'.format(' '.join(test_f1)))
     print('Execution time:      {}'.format(' '.join(exec_time)))
     return train_accuracy, test_accuracy, train_f1, test_f1, exec_time, clf
+
+
+def get_coarsening_map(dataset):
+    if dataset == 'deap':  # 15 groups
+        cmap = [[0, 16, 1, 17], [3, 2], [4], [7, 6], [8], [11, 10],
+                [12, 30, 13, 14, 31], [28, 29], [26], [24, 25], [21], [19, 20],
+                [18, 5, 22], [23], [9, 27, 15]]
+    elif dataset == 'dreamer':  # number of nodes is too small to group
+        cmap = None
+
+    return cmap

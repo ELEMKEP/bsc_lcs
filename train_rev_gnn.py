@@ -21,6 +21,7 @@ from model.module_iag import IAG
 from utils.utils_loss import label_accuracy, label_cross_entropy
 import utils.utils_data
 from utils.utils_data import *
+from utils.utils_miscellaneous import get_coarsening_map
 '''
 Revision code for valence and arousal
 '''
@@ -134,10 +135,7 @@ def _construct_model(args, graphs):
         model = STGCN(1, decoder_out_dim, graphs[0], False,
                       model_size=model_split[1])
     elif args.model == 'iag':
-        if args.dataset == 'deap':
-            cmap = None
-        elif args.dataset == 'dreamer':
-            cmap = None
+        cmap = get_coarsening_map(args.dataset)
         model = IAG(args.num_objects, 5, decoder_out_dim, 32, 64, 8,
                     coarsening_map=cmap)
 
