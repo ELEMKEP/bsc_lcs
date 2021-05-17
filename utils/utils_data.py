@@ -209,8 +209,7 @@ def transform_data_de(datum, n_band=8):
 
         data_stack = [delta, theta, alpha, beta, gamma]
 
-    data_stack = np.stack([de_func(d) for d in data_stack], axis=-1)[...,
-                                                                     np.newaxis]
+    data_stack = np.stack([de_func(d) for d in data_stack], axis=-1)
     data_stack = torch.FloatTensor(data_stack)
 
     return data_stack

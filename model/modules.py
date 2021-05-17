@@ -173,9 +173,11 @@ class Feat_GNN(nn.Module):
 
         self.out_fc1 = nn.Linear(self.out_fc_dim, n_hid)
         self.out_fc2 = nn.Linear(n_hid, n_out)
-        self.dropout_prob = do_prob
+        self.dropout_prob = do_pro 
+        b
 
         self._init_weights()
+
 
     def _init_weights(self):
         for m in self.modules():

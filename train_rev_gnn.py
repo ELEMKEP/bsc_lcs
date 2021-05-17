@@ -58,19 +58,19 @@ def _construct_loaders(args, perm):
             data_t = transform_chebnet_permutation(data_t, perm)
         else:
             if args.dataset == 'deap':
-                if data == 'raw':
+                if args.data == 'raw':
                     data_t = transform_deap_data_raw(datum)
-                elif data == 'specent':
+                elif args.data == 'specent':
                     data_t = transform_eeg_specent(datum)
-                elif data == 'de':
-                    data_t = transform_data_de(datum)
+                elif args.data == 'de':
+                    data_t = transform_data_de(datum, n_band=5)
             elif args.dataset == 'dreamer':
-                if data == 'raw':
+                if args.data == 'raw':
                     data_t = transform_dreamer_data_raw(datum)
-                elif data == 'specent':
+                elif args.data == 'specent':
                     data_t = transform_eeg_specent(datum)
-                elif data == 'de':
-                    data_t = transform_data_de(datum)
+                elif args.data == 'de':
+                    data_t = transform_data_de(datum, n_band=5)
 
         # Label
         label_func_str = f'transform_{args.dataset}_label_{args.label}'
