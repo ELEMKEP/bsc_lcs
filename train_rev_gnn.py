@@ -175,18 +175,6 @@ def _calculate_l1(model, args):
     return l1 * args.reg
 
 
-def _make_cuda(models, tensors, args):
-    if args.cuda:
-        for model in models:
-            model.cuda()
-
-        cuda_tensors = []
-        for tensor in tensors:
-            cuda_tensors.append(tensor.cuda())
-
-    return tuple(cuda_tensors)
-
-
 def train(epoch, best_val_loss, args, params):
     """
     Main train function for a single epoch.
@@ -392,7 +380,8 @@ def main():
         loaders = (train_loader, test_loader)
 
         model = _construct_model(args, graphs)
-        model.cuda()
+        if args.cuda:
+            model.cuda()
 
         optimizer, scheduler = _construct_optimizer(model, args)
 

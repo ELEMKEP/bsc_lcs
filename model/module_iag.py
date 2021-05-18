@@ -58,7 +58,8 @@ class IAG(nn.Module):
         c_n: (num_layers * num_directions, batch, hidden_size): t=seq_len cell state
         '''
         # in_features = N * LSTM_output
-        self.fc = nn.Linear(in_features=N * hid_lstm, out_features=Fout)
+        NN = len(self.Cmap) if self.Cmap else N
+        self.fc = nn.Linear(in_features=NN * hid_lstm, out_features=Fout)
 
     def graph_l1_loss(self):
         print(self.A.size())
@@ -67,14 +68,18 @@ class IAG(nn.Module):
     def _coarsen(self, y):
         # Graph coarsening operation
         # y.shape = [B, N, Fhid]
+        B, N, F = y.size()
 
         if not self.Cmap:  # do not coarsen
             return y
 
         z_list = []
         for region in self.Cmap:
+            rr = torch.LongTensor(region).view(1, len(region), 1).repeat(B, 1, F)
+            rr = rr.to(y.device)
+
             y_src = torch.gather(y, dim=1,
-                                 index=region)  # [B, node_per_region, Fhid]
+                                 index=rr)  # [B, node_per_region, Fhid]
             z_i = torch.mean(y_src, dim=1, keepdim=True)
             z_list.append(z_i)
         z = torch.cat(z_list, dim=1)  # [B, #region, Fhid]
@@ -105,28 +110,32 @@ class IAG(nn.Module):
         A = torch.matmul(A, Djj_sqinv)  # [B, Fin, N, N]
         self.A = A  # For loss computation
 
-        Asum = torch.zeros(B, Fin, N, N)
-        AA = torch.eye(N).view(1, 1, N, N).repeat(B, Fin, 1,
-                                                  1)  # [B, Fin, N, N]
+        Asum = torch.zeros(B*Fin, N, N)
+        A = A.view(B*Fin, N, N)
+        AA = torch.eye(N).view(1, N, N).repeat(B*Fin, 1,
+                                                  1)
         for i in range(self.K - 1):
             Asum += AA
-            AA = torch.bmm(A, AA)
+            AA = torch.bmm(AA, A)
         Asum += AA  # A^(K-1) / Asum.shape = [B, Fin, N, N]
+        # Asum = Asum.view(B, Fin, N, N)
 
         # Graph convolution and filtering
-        X = x.transpose(-1, -2).view(B, Fin, N, 1)
+        X = x.transpose(-1, -2).contiguous().view(B*Fin, N, 1)
         X = torch.bmm(Asum,
-                      X)  # [B, Fin, N, N] * [B, Fin, N, 1] => [B, Fin, N, 1]
-        X = X.squeeze(-1).transpose(-1, -2)  # [B, N, Fin]
-        Y = torch.bmm(X, self.U)  # [B, N, Fhid]
+                      X)  # [B*Fin, N, N] * [B*Fin, N, 1] => [B*Fin, N, 1]
+        X = X.view(B, Fin, N).transpose(-1, -2)
+        Y = torch.matmul(X, self.U)  # [B, N, Fin] * [Fin, Fhid] => [B, N, Fhid]
 
         # Graph coarsening
         Z = self._coarsen(Y)  # [B, #region, Fhid]
 
         # Region dependency modeling
-        Z = self.lstm(Z)
+        Z, _ = self.lstm(Z)
 
         # Fully-connected layer
+
+        Z = Z.contiguous().view(B, -1)
         Z = self.fc(Z)
 
         return Z
