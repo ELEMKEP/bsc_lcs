@@ -161,18 +161,20 @@ def _construct_optimizer(model, args):
     return optimizer, scheduler
 
 
-def _calculate_l1(model, args):
+def _calculate_reg(model, args):
+    reg = 0
+
     if 'dgcnn' in args.model:
         params = list(model.layer.parameters()) + list(model.fc.parameters())
+
+        for param in params:
+            reg += torch.norm(param, p=args.reg_order) * args.reg
+    elif 'iag' in args.model:
+        reg += model.graph_l1_loss()
     else:
-        params = list(model.parameters())
+        pass
 
-    l1 = 0
-
-    for param in params:
-        l1 += torch.norm(param, p=args.reg_order)
-
-    return l1 * args.reg
+    return reg
 
 
 def train(epoch, best_val_loss, args, params):
@@ -211,7 +213,7 @@ def train(epoch, best_val_loss, args, params):
 
         loss_ent = label_cross_entropy(output, labels)
         label_acc = label_accuracy(output, labels)
-        loss_reg = _calculate_l1(model, args)
+        loss_reg = _calculate_reg(model, args)
         loss = loss_ent + loss_reg
 
         loss.backward()
@@ -240,7 +242,7 @@ def train(epoch, best_val_loss, args, params):
             output = model(data)
             loss_ent = label_cross_entropy(output, labels)
             label_acc = label_accuracy(output, labels)
-            loss_reg = _calculate_l1(model, args)
+            loss_reg = _calculate_reg(model, args)
             loss = loss_ent + loss_reg
 
         acc_test.append(label_acc.detach().item())
@@ -306,7 +308,7 @@ def test(args, params):
 
             loss_ent = label_cross_entropy(output, labels)
             label_acc = label_accuracy(output, labels)
-            loss_reg = _calculate_l1(model, args)
+            loss_reg = _calculate_reg(model, args)
             loss = loss_ent
 
         acc_test.append(label_acc.detach().item())
