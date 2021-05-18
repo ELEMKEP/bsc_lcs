@@ -17,6 +17,8 @@ class IAG(nn.Module):
         self.K = K  # Default: 8
         self.alpha = alpha
 
+        assert Fin == len(alpha), "len(alpha) != Fin"
+
         # self.GCNhid = hid_gcn  # Default: 32, 64 for LSTM
         # self.LSTMhid = hid_lstm
 
@@ -61,8 +63,14 @@ class IAG(nn.Module):
         self.fc = nn.Linear(in_features=N * hid_lstm, out_features=Fout)
 
     def graph_l1_loss(self):
-        print(self.A.size())
-        pass
+        self.A # self.A: [B, Fin, N, N]
+
+        A_norm = torch.norm(self.A, dim=[-1, -2], p=1)
+        band_norm = A_norm * self.alpha # [B, Fin] * [Fin] => [B * Fin]
+        sum_norm = torch.sum(band_norm, dim=1)
+        batch_mean_norm = torch.mean(sum_norm)
+        
+        return batch_mean_norm
 
     def _coarsen(self, y):
         # Graph coarsening operation
