@@ -66,8 +66,10 @@ class IAG(nn.Module):
     def graph_l1_loss(self):
         self.A # self.A: [B, Fin, N, N]
 
-        A_norm = torch.norm(self.A, dim=[-1, -2], p=1)
-        band_norm = A_norm * self.alpha # [B, Fin] * [Fin] => [B * Fin]
+        A_norm = self.A.norm(p=1, dim=-1).norm(p=1, dim=-1)
+        alpha = torch.tensor(self.alpha).to(A_norm.device)
+        band_norm = A_norm * alpha # [B, Fin] * [Fin] => [B * Fin]
+
         sum_norm = torch.sum(band_norm, dim=1)
         batch_mean_norm = torch.mean(sum_norm)
         
@@ -118,10 +120,11 @@ class IAG(nn.Module):
         A = torch.matmul(A, Djj_sqinv)  # [B, Fin, N, N]
         self.A = A  # For loss computation
 
-        Asum = torch.zeros(B*Fin, N, N)
         A = A.view(B*Fin, N, N)
-        AA = torch.eye(N).view(1, N, N).repeat(B*Fin, 1,
-                                                  1)
+        
+        Asum = torch.zeros(B*Fin, N, N).to(A.device)
+        AA = torch.eye(N).to(A.device)
+        AA = AA.view(1, N, N).repeat(B*Fin, 1, 1)
         for i in range(self.K - 1):
             Asum += AA
             AA = torch.bmm(AA, A)
