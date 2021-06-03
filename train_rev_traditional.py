@@ -1,27 +1,23 @@
 import os
+import time
 import datetime
+import pickle
 from contextlib import redirect_stdout
 from pathlib import Path
 
 import numpy as np
 import torch
-import torch.optim as optim
-from torch.optim import lr_scheduler
 
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 import sklearn.svm, sklearn.neighbors, sklearn.neighbors
 
 import arguments_traditional
-from utils.utils_loss import label_accuracy, label_cross_entropy
 import utils.utils_data
 from utils.utils_data import *
-from utils.utils_miscellaneous import get_coarsening_map
-'''
-Revision code for valence and arousal
-'''
 
-def _construct_loaders(args, perm):
+
+def _construct_loaders(args):
 
     def transform(datum):
         # Data
@@ -54,14 +50,7 @@ def _construct_loaders(args, perm):
     return loaders_kfold
 
 
-def _construct_model(args, graphs):
-    if args.label == 'video':
-        if args.dataset == 'deap':
-            decoder_out_dim = 40
-        elif args.dataset == 'dreamer':
-            decoder_out_dim = 18
-    else:
-        decoder_out_dim = 2
+def _construct_model(args):
 
     if args.model == 'svm':
         # --lr: C-value in SVC
@@ -91,7 +80,35 @@ def _construct_model(args, graphs):
             'min_samples_split': str(min_samples_split)
         }
 
-    return model
+    return model, param_dict
+
+
+def sklearn_baseline(clf, train_data, train_labels, test_data, test_labels,
+                     args):
+    """Train various classifiers to get a baseline."""
+
+    t_start = time.process_time()
+    clf.fit(train_data, train_labels)
+    train_pred = clf.predict(train_data)
+    test_pred = clf.predict(test_data)
+
+    train_acc = 100 * sklearn.metrics.accuracy_score(train_labels, train_pred)
+    test_acc = 100 * sklearn.metrics.accuracy_score(test_labels, test_pred)
+    train_f1 = 100 * sklearn.metrics.f1_score(train_labels, train_pred,
+                                              average='weighted')
+    test_f1 = 100 * sklearn.metrics.f1_score(test_labels, test_pred,
+                                             average='weighted')
+    exec_time = time.process_time() - t_start
+
+    with redirect_stdout(open(args.out, 'a')):
+        print('Train accuracy:      {:5.2f}'.format(train_acc))
+        print('Test accuracy:       {:5.2f}'.format(test_acc))
+        print('Train F1 (weighted): {:5.2f}'.format(train_f1))
+        print('Test F1 (weighted):  {:5.2f}'.format(test_f1))
+        print('Execution time:      {}'.format(exec_time))
+
+    return train_acc, test_acc, train_f1, test_f1, train_pred, test_pred, exec_time
+
 
 def main():
     """
@@ -141,14 +158,14 @@ def main():
         param_dict['writer'] = writer
 
     # Load dataset
-    graphs, perm = load_graph_file(args)
-    loaders_kfold = _construct_loaders(args, perm)
+    loaders_kfold = _construct_loaders(args)
 
     # Loop saving
-    acc_test_list = []
-    ent_test_list = []
-    loss_test_list = []
-
+    train_acc_list = []
+    test_acc_list = []
+    train_f1_list = []
+    test_f1_list = []
+    exec_time_list = []
     for kf, (train_loader, test_loader) in enumerate(loaders_kfold):
         loaders = (train_loader, test_loader)
 
@@ -174,77 +191,45 @@ def main():
         test_data = test_data.reshape(test_data.shape[0], -1)
         test_label = test_label.reshape(test_label.shape[0],)
 
-        model = _construct_model(args)
-        if args.cuda:
-            model.cuda()
-
-        optimizer, scheduler = _construct_optimizer(model, args)
+        model, param_add = _construct_model(args)
 
         param_dict.update({
             'loaders': loaders,
             'model': model,
-            'optimizer': optimizer,
-            'scheduler': scheduler,
             'fold': kf,
         })
+        param_dict.update(param_add)
 
-        # Train model
-        best_val_loss = np.inf
-        best_epoch = 0
-        for epoch in range(args.epochs):
-            val_loss = train(epoch, best_val_loss, args, param_dict)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_epoch = epoch
+        output = sklearn_baseline(model, train_data, train_label, test_data,
+                                  test_label, args)
+        train_acc, test_acc, train_f1, test_f1, train_pred, test_pred, exec_time = output
 
-        with redirect_stdout(log):
-            print(f'Fold {kf} - Best epoch: {best_epoch+1:04d}')
-            if args.save_folder:
-                print(f'Fold {kf} - Best epoch: {best_epoch+1:04d}', file=log)
-                log.flush()
+        train_acc_list.append(train_acc)
+        test_acc_list.append(test_acc)
+        train_f1_list.append(train_f1)
+        test_f1_list.append(test_f1)
+        exec_time_list.append(exec_time)
 
-        acc_test, ent_test, loss_test = test(args, param_dict)
+    train_acc_mean = np.mean(train_acc_list)
+    test_acc_mean = np.mean(test_acc_list)
+    train_f1_mean = np.mean(train_f1_list)
+    test_f1_mean = np.mean(test_f1_list)
+    exec_time_mean = np.mean(exec_time_list)
 
-        acc_test_list.append(acc_test)
-        ent_test_list.append(ent_test)
-        loss_test_list.append(loss_test)
+    if writer is not None:
+        metric_dict = {
+            'Train Accuracy': '{:8.6f}'.format(train_acc_mean),
+            'Test Accuracy': '{:8.6f}'.format(test_acc_mean),
+            'Train F1': '{:8.6f}'.format(train_f1_mean),
+            'Test F1': '{:8.6f}'.format(test_f1_mean),
+            'Dataset': str(args.data),
+            'Elapsed time': f'{str(exec_time_mean):8.2f}s'
+        }
+        metric_dict.update(param_dict)
 
-    acc_fold_m = np.mean(acc_test_list)
-    ent_fold_m = np.mean(ent_test_list)
-    loss_fold_m = np.mean(loss_test_list)
-
-    metric_dict = {
-        'accuracy': acc_fold_m,
-        'loss': loss_fold_m,
-        'list_accuracy': acc_test_list,
-        'list_loss': loss_test_list
-    }
-
-    if (writer is not None):
-        arg_dict = vars(args)
-
-        key_list = [
-            'dataset',
-            'label',
-            'epochs',
-            'batch_size',
-            'lr',
-            'beta1',
-            'beta2',
-            'lr_decay',
-            'gamma',
-            'hidden',
-            'dropout',
-        ]
-        filtered_arg_dict = {k: arg_dict[k] for k in key_list}
-
-        writer.add_text('parameters', str(filtered_arg_dict), 0)
         writer.add_text('metrics', str(metric_dict), 0)
         writer.close()
-
-    if log is not None:
-        print(save_folder)
-        log.close()
+    log.close()
 
 
 if __name__ == "__main__":

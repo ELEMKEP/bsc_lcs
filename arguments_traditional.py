@@ -26,8 +26,10 @@ def _add_model_arguments(parser):
 
 
 def _add_knn_arguments(parser):
-    parser.add_argument('--neighbor', type=int, default=15, help='Number of neighbors')
-    parser.add_argument('--n_jobs', type=int, default=8, help='Number of kNN workers')
+    parser.add_argument('--neighbor', type=int, default=15,
+                        help='Number of neighbors')
+    parser.add_argument('--n_jobs', type=int, default=8,
+                        help='Number of kNN workers')
 
 
 def _add_rf_arguments(parser):
