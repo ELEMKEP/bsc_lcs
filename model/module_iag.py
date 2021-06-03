@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-EPS = 1e-8
-
+EPS = 1e-4
 
 class IAG(nn.Module):
 
@@ -101,6 +100,7 @@ class IAG(nn.Module):
         B, N, Fin = x.size()
         assert (N == self.N) and (
             Fin == self.Fin), 'N and Fin of data and model must be same.'
+        # print(torch.mean(x), torch.std(x), torch.min(x), torch.max(x))
 
         # Eq. 2
         O = torch.matmul(self.P, x) + self.B  # [B, N, Fin]
@@ -111,14 +111,20 @@ class IAG(nn.Module):
         G = G.view(B, N, N, Fin).permute(0, 3, 1, 2)  # [B, Fin, N, N]
 
         # Degree normalization
-        Dii = torch.sqrt(torch.sum(G, dim=-2))  # [B, Fin, (1,) N]
+        Dii = torch.sqrt(torch.sum(G, dim=-2)) + EPS  # [B, Fin, (1,) N]
         Dii_sqinv = torch.diag_embed(1 / Dii)  # [B, Fin, N, N]
-        Djj = torch.sqrt(torch.sum(G, dim=-1))  # [B, Fin, N (,1)]
+        Djj = torch.sqrt(torch.sum(G, dim=-1)) + EPS  # [B, Fin, N (,1)]
         Djj_sqinv = torch.diag_embed(1 / Djj)  # [B, Fin, N, N]
 
         A = torch.matmul(Dii_sqinv, G)  # [B, Fin, N, N]
         A = torch.matmul(A, Djj_sqinv)  # [B, Fin, N, N]
         self.A = A  # For loss computation
+        # print(
+        #     'Dii (min, max, mean, std): ', torch.min(Dii).item(), torch.max(Dii).item(), torch.mean(Dii).item(), torch.std(Dii).item(),
+        #     'Djj (min, max, mean, std): ', torch.min(Djj).item(), torch.max(Djj).item(), torch.mean(Djj).item(), torch.std(Djj).item(),
+        #     '\nDii_sqinv: ', Dii_sqinv.size(), torch.sum(Dii_sqinv), 
+        #     '\nDjj_sqinv: ', Djj_sqinv.size(), torch.sum(Djj_sqinv),
+        #     '\nA: ', A.size(), torch.sum(A))
 
         A = A.view(B*Fin, N, N)
         

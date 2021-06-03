@@ -54,24 +54,23 @@ def _construct_loaders(args, perm):
 
     def transform(datum):
         # Data
+        if args.dataset == 'deap':
+            if args.data == 'raw':
+                data_t = transform_deap_data_raw(datum)
+            elif args.data == 'specent':
+                data_t = transform_eeg_specent(datum)
+            elif args.data == 'de':
+                data_t = transform_data_de(datum, n_band=5)
+        elif args.dataset == 'dreamer':
+            if args.data == 'raw':
+                data_t = transform_dreamer_data_raw(datum)
+            elif args.data == 'specent':
+                data_t = transform_eeg_specent(datum)
+            elif args.data == 'de':
+                data_t = transform_data_de(datum, n_band=5)
+
         if args.model in ['chebnet']:
-            data_t = transform_eeg_specent(datum)
             data_t = transform_chebnet_permutation(data_t, perm)
-        else:
-            if args.dataset == 'deap':
-                if args.data == 'raw':
-                    data_t = transform_deap_data_raw(datum)
-                elif args.data == 'specent':
-                    data_t = transform_eeg_specent(datum)
-                elif args.data == 'de':
-                    data_t = transform_data_de(datum, n_band=5)
-            elif args.dataset == 'dreamer':
-                if args.data == 'raw':
-                    data_t = transform_dreamer_data_raw(datum)
-                elif args.data == 'specent':
-                    data_t = transform_eeg_specent(datum)
-                elif args.data == 'de':
-                    data_t = transform_data_de(datum, n_band=5)
 
         # Label
         label_func_str = f'transform_{args.dataset}_label_{args.label}'
@@ -120,14 +119,19 @@ def _construct_model(args, graphs):
             model_type = DGCNN_V2
         elif args.model == 'dgcnn_v2_rev':
             model_type = DGCNN_V2_Reverse
+
+        if args.data == 'raw':
+            F_in = args.timesteps
         model = model_type(F_in, args.hidden, decoder_out_dim, graphs[0], 4,
                            args.cuda, True)
     elif args.model == 'chebnet':
-        MM = [512, decoder_out_dim]
-        FF = [32, 64]
-        KK = [4, 9]
+        MM = [256, decoder_out_dim]
+        FF = [16, 32]
+        KK = [2, 3]
         PP = [2, 2]
-
+        
+        if args.data in ['raw', 'de']:
+            args.dims = args.timesteps
         model = DEAP_ChebNet(graphs, FF, KK, PP, MM, Fin=args.dims)
     elif 'stgcn' in args.model:
         # model keyword should be stgcn_<size>. <size> = ['full', 'medium', 'small']
@@ -136,7 +140,11 @@ def _construct_model(args, graphs):
                       model_size=model_split[1])
     elif args.model == 'iag':
         cmap = get_coarsening_map(args.dataset)
-        model = IAG(args.num_objects, 5, decoder_out_dim, 32, 64, 8,
+
+        if args.data == 'de':
+            F_in = 5
+            alpha = [1e-4, 1e-5, 1e-5, 1e-5, 1e-5]
+        model = IAG(args.num_objects, F_in, decoder_out_dim, 32, 64, 8, alpha=alpha,
                     coarsening_map=cmap)
 
     if args.load_folder:
@@ -210,6 +218,8 @@ def train(epoch, best_val_loss, args, params):
         optimizer.zero_grad()
 
         output = model(data)
+
+        # print(output.size(), torch.isnan(output.view(-1)).sum().item())
 
         loss_ent = label_cross_entropy(output, labels)
         label_acc = label_accuracy(output, labels)
@@ -289,6 +299,7 @@ def test(args, params):
     model = params['model']
 
     model_file = params['model_file']
+    fold = params['fold']
 
     acc_test = []
     ent_test = []
@@ -297,12 +308,12 @@ def test(args, params):
     model.eval()
     model.load_state_dict(torch.load(model_file))
 
-    for index, (data, labels) in enumerate(tqdm(test_loader)):
+    for index, (data, labels) in enumerate(tqdm(test_loader, desc=f'Fold {fold} Test')):
         # data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
-
+        
         with torch.no_grad():
             output = model(data)
 
@@ -392,6 +403,7 @@ def main():
             'model': model,
             'optimizer': optimizer,
             'scheduler': scheduler,
+            'fold': kf,
         })
 
         # Train model

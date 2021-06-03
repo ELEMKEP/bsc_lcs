@@ -61,7 +61,8 @@ def load_lmdb_kfold_dataset(lmdb_root, dataset=EEGDataset, batch_size=128,
 
 def transform_deap_data_raw(datum):
     data_r = np.reshape(datum.ddata, datum.dshape)
-    data_r = data_r / 32.1079  # mean is close to 0, global std
+    # data_r = data_r / 32.1079  # mean is close to 0, global std
+    
     data_r = torch.clamp(torch.FloatTensor(data_r[..., np.newaxis]), -10., 10.)
     return data_r
 
@@ -77,7 +78,7 @@ def transform_deap_label_video(datum):
 
 def transform_dreamer_data_raw(datum):
     data_r = np.reshape(datum.ddata, datum.dshape)
-    data_r = (data_r - 4251.808) / 197.3314  # global mean and std
+    # data_r = (data_r - 4251.808) / 197.3314  # global mean and std
     data_r = torch.clamp(torch.FloatTensor(data_r[..., np.newaxis]), -10., 10.)
     return data_r
 
@@ -122,6 +123,8 @@ def transform_dreamer_label_arousal(datum):
 
 
 def transform_chebnet_permutation(data, perm):
+    if len(data.size()) == 3:
+        data = data.squeeze(-1)
     N, T = data.size()
 
     perm = np.array(perm, dtype=np.int32)

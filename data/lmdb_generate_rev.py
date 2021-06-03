@@ -138,7 +138,7 @@ def construct_lmdb_dataset(input_path, output_path, dataset_type):
     signals_mean = np.mean(signals_raw)
     signals_std = np.std(signals_raw)
     print('Mean: {}, Stddev: {}'.format(signals_mean, signals_std))
-    signals_raw = (signals_raw - signals_mean) / signals_std
+    # signals_raw = (signals_raw - signals_mean) / signals_std
 
     signals_div, labels_div = divide_signal(signals_raw, labels_raw, 128, 3, 2,
                                             axis=0)
