@@ -19,16 +19,24 @@ def _add_data_arguments(parser):
     parser.add_argument('--data-path', type=str, default='E:\\lmdb\\',
                         help='Path for data.')
 
+    parser.add_argument(
+        '--save-folder', type=str, default='logs',
+        help='Where to save the trained model, leave empty to not save anything.'
+    )
+    parser.add_argument('--batch-size', type=int, default=32,
+                        help='Number of samples per batch.')
+
+
 
 def _add_model_arguments(parser):
     ### Encoder and decoder
-    parser.add_argument('--model', type=str, default='dgcnn', help='Model type')
+    parser.add_argument('--model', type=str, default='svm', help='Model type')
 
 
 def _add_knn_arguments(parser):
     parser.add_argument('--neighbor', type=int, default=15,
                         help='Number of neighbors')
-    parser.add_argument('--n_jobs', type=int, default=8,
+    parser.add_argument('--n-jobs', type=int, default=8,
                         help='Number of kNN workers')
 
 

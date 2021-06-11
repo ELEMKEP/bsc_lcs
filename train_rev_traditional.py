@@ -7,10 +7,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import sklearn
+import sklearn.svm
+import sklearn.neighbors
+import sklearn.ensemble
 
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
-import sklearn.svm, sklearn.neighbors, sklearn.neighbors
 
 import arguments_traditional
 import utils.utils_data
@@ -54,21 +57,20 @@ def _construct_model(args):
 
     if args.model == 'svm':
         # --lr: C-value in SVC
-        model = sklearn.svm.LinearSVC(C=args.lr)
-        param_dict = {'C': str(args.lr)}
+        model = sklearn.svm.LinearSVC(C=args.C)
+        param_dict = {'C': str(args.C)}
     elif args.model == 'knn':
         # --encoder-hidden: k-value in KNN
-        n_neighbors = args.encoder_hidden
-        model = sklearn.neighbors.KNeighborsClassifier(n_neighbors=n_neighbors,
+        model = sklearn.neighbors.KNeighborsClassifier(n_neighbors=args.neighbor,
                                                        n_jobs=8)
-        param_dict = {'k': str(n_neighbors)}
+        param_dict = {'k': str(args.neighbor)}
     elif args.model == 'rf':
         # --encoder-hidden: n_estimator
         # --encoder-heads: max_depth (None if -1)
         # --decoder-hidden: min_samples_split (None if -1)
         n_estimator = args.n_estimator
         max_depth = None if args.max_depth == -1 else args.max_depth
-        min_samples_split = 2 if args.min_samples_split == -1 else args.min_samples_spli
+        min_samples_split = 2 if args.min_samples_split == -1 else args.min_samples_split
 
         model = sklearn.ensemble.RandomForestClassifier(
             n_estimators=n_estimator, max_depth=max_depth,
@@ -219,11 +221,16 @@ def main():
     if writer is not None:
         metric_dict = {
             'Train Accuracy': '{:8.6f}'.format(train_acc_mean),
+            'TrainAcc Raw': str(train_acc_list),
             'Test Accuracy': '{:8.6f}'.format(test_acc_mean),
+            'TestAcc Raw': str(test_acc_list),
             'Train F1': '{:8.6f}'.format(train_f1_mean),
+            'TrainF1 Raw': str(train_f1_list),
             'Test F1': '{:8.6f}'.format(test_f1_mean),
+            'TestF1 Raw': str(test_f1_list),
             'Dataset': str(args.data),
-            'Elapsed time': f'{str(exec_time_mean):8.2f}s'
+            'Label': str(args.label),
+            'Elapsed time': '{:8.2f}s'.format(exec_time_mean)
         }
         # metric_dict.update(param_dict)
 
