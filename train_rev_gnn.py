@@ -2,6 +2,7 @@ import os
 import time
 import pickle
 import datetime
+from tqdm import tqdm
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -9,8 +10,6 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.optim import lr_scheduler
-
-from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
 import arguments_gnn
@@ -18,6 +17,8 @@ from model.module_dgcnn import DGCNN, DGCNN_V2, DGCNN_V2_Reverse
 from model.module_chebnet import DEAP_ChebNet
 from model.module_stgcn import STGCN
 from model.module_iag import IAG
+from model.module_racnn import RACNN
+
 from utils.utils_loss import label_accuracy, label_cross_entropy
 import utils.utils_data
 from utils.utils_data import *
@@ -129,7 +130,7 @@ def _construct_model(args, graphs):
         FF = [16, 32]
         KK = [2, 3]
         PP = [2, 2]
-        
+
         if args.data in ['raw', 'de']:
             args.dims = args.timesteps
         model = DEAP_ChebNet(graphs, FF, KK, PP, MM, Fin=args.dims)
@@ -144,8 +145,10 @@ def _construct_model(args, graphs):
         if args.data == 'de':
             F_in = 5
             alpha = [1e-4, 1e-5, 1e-5, 1e-5, 1e-5]
-        model = IAG(args.num_objects, F_in, decoder_out_dim, 32, 64, 8, alpha=alpha,
-                    coarsening_map=cmap)
+        model = IAG(args.num_objects, F_in, decoder_out_dim, 32, 64, 8,
+                    alpha=alpha, coarsening_map=cmap)
+    elif args.model == 'racnn':
+        model = RACNN()
 
     if args.load_folder:
         model_file = os.path.join(args.load_folder, 'model.pt')
@@ -308,12 +311,14 @@ def test(args, params):
     model.eval()
     model.load_state_dict(torch.load(model_file))
 
-    for index, (data, labels) in enumerate(tqdm(test_loader, desc=f'Fold {fold} Test')):
+    for index, (data,
+                labels) in enumerate(tqdm(test_loader,
+                                          desc=f'Fold {fold} Test')):
         # data = data[:, :, :args.timesteps, :]
         if args.cuda:
             data = data.cuda()
             labels = labels.cuda()
-        
+
         with torch.no_grad():
             output = model(data)
 

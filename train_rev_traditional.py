@@ -225,7 +225,7 @@ def main():
             'Dataset': str(args.data),
             'Elapsed time': f'{str(exec_time_mean):8.2f}s'
         }
-        metric_dict.update(param_dict)
+        # metric_dict.update(param_dict)
 
         writer.add_text('metrics', str(metric_dict), 0)
         writer.close()
